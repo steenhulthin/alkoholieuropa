@@ -1,0 +1,249 @@
+import matplotlib.pyplot as plt
+import pandas as pd
+from shiny import App, reactive, render, ui
+
+from shared import (
+    app_dir,
+    attach_labels,
+    filter_reference_slice,
+    latest_snapshot,
+    load_eurostat,
+)
+
+
+def _empty_plot(message: str):
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.text(0.5, 0.5, message, ha="center", va="center")
+    ax.axis("off")
+    return fig
+
+
+def _frequency_rank(label: str) -> int:
+    text = str(label).lower()
+    if "every day" in text or "daily" in text:
+        return 0
+    if "every week" in text or "weekly" in text:
+        return 1
+    if "every month" in text or "monthly" in text:
+        return 2
+    if "less" in text and "month" in text:
+        return 3
+    if "never" in text:
+        return 4
+    return 99
+
+
+def _load_data():
+    alcohol_raw = load_eurostat("hlth_ehis_al1c")
+    alcohol_labeled = attach_labels(alcohol_raw, "hlth_ehis_al1c")
+    alcohol_filtered = filter_reference_slice(
+        alcohol_labeled,
+        keep_dims=["frequenc", "sex", "age", "geo"],
+    )
+    alcohol_latest = latest_snapshot(
+        alcohol_filtered,
+        group_cols=["frequenc", "sex", "age", "geo"],
+    )
+
+    sat_raw = load_eurostat("sdg_03_20")
+    sat_labeled = attach_labels(sat_raw, "sdg_03_20")
+    sat_filtered = filter_reference_slice(
+        sat_labeled,
+        keep_dims=["sex", "geo", "levels"],
+    )
+    sat_latest = latest_snapshot(
+        sat_filtered,
+        group_cols=["sex", "geo", "levels"],
+    )
+
+    return alcohol_latest, sat_latest
+
+
+try:
+    alcohol_df, satisfaction_df = _load_data()
+    load_error = ""
+except Exception as exc:
+    alcohol_df = pd.DataFrame()
+    satisfaction_df = pd.DataFrame()
+    load_error = str(exc)
+
+
+def _choices(df: pd.DataFrame, code_col: str, label_col: str, by_frequency: bool = False):
+    if df.empty or code_col not in df.columns:
+        return {}
+    labels = df[label_col] if label_col in df.columns else df[code_col]
+    pairs = (
+        pd.DataFrame({"code": df[code_col], "label": labels})
+        .dropna(subset=["code"])
+        .drop_duplicates()
+    )
+    if by_frequency:
+        pairs["rank"] = pairs["label"].map(_frequency_rank)
+        pairs = pairs.sort_values(["rank", "label"])
+    else:
+        pairs = pairs.sort_values("label")
+    return {f"{row.label} ({row.code})": row.code for row in pairs.itertuples(index=False)}
+
+
+sex_choices = _choices(alcohol_df, "sex", "sex_label")
+age_choices = _choices(alcohol_df, "age", "age_label")
+frequency_choices = _choices(alcohol_df, "frequenc", "frequenc_label", by_frequency=True)
+sex_default = next(iter(sex_choices.values()), "")
+age_default = next(iter(age_choices.values()), "")
+frequency_default = list(frequency_choices.values())
+
+app_ui = ui.page_sidebar(
+    ui.sidebar(
+        ui.input_select("sex", "Sex", choices=sex_choices, selected=sex_default),
+        ui.input_select("age", "Age group", choices=age_choices, selected=age_default),
+        ui.input_checkbox_group(
+            "frequency_types",
+            "Frequency type",
+            choices=frequency_choices,
+            selected=frequency_default,
+        ),
+        title="Filter controls",
+    ),
+    ui.card(
+        ui.h2("Alcohol Consumption and Sex Satisfaction in Europe"),
+        ui.p("Top bar with headline and context. Sidebar filters control all charts."),
+    ),
+    ui.card(
+        ui.card_header("Alcohol consumption by country (highest shares first)"),
+        ui.output_plot("alcohol_chart"),
+        full_screen=True,
+    ),
+    ui.card(
+        ui.card_header("Sex satisfaction level by country"),
+        ui.p("Not divided into age groups in this dataset (population aged 16+)."),
+        ui.output_plot("satisfaction_chart"),
+        full_screen=True,
+    ),
+    ui.card(
+        ui.card_header("Alcohol consumption vs sex satisfaction (scatterplot)"),
+        ui.output_plot("scatter_chart"),
+        full_screen=True,
+    ),
+    ui.include_css(app_dir / "styles.css"),
+    title="Alcohol and Sex Dashboard",
+    fillable=True,
+)
+
+
+def server(input, output, session):
+    @reactive.calc
+    def alcohol_selected():
+        if alcohol_df.empty:
+            return alcohol_df
+        selected_freq = input.frequency_types()
+        data = alcohol_df.copy()
+        if input.sex():
+            sex_filtered = data.loc[data["sex"] == input.sex()]
+            if not sex_filtered.empty:
+                data = sex_filtered
+        if input.age():
+            age_filtered = data.loc[data["age"] == input.age()]
+            if not age_filtered.empty:
+                data = age_filtered
+        if selected_freq:
+            freq_filtered = data.loc[data["frequenc"].isin(selected_freq)]
+            if not freq_filtered.empty:
+                data = freq_filtered
+        return data
+
+    @reactive.calc
+    def satisfaction_country():
+        if satisfaction_df.empty:
+            return satisfaction_df
+        data = satisfaction_df.loc[satisfaction_df["sex"] == input.sex()].copy()
+        return data.sort_values("OBS_VALUE", ascending=False)
+
+    @render.plot
+    def alcohol_chart():
+        if load_error:
+            return _empty_plot(f"Data loading failed: {load_error}")
+        data = alcohol_selected()
+        if data.empty:
+            return _empty_plot("No alcohol data for the selected sex, age group, and frequency types.")
+
+        country_col = "geo_label" if "geo_label" in data.columns else "geo"
+        freq_col = "frequenc_label" if "frequenc_label" in data.columns else "frequenc"
+        plot_df = data[[country_col, freq_col, "OBS_VALUE"]].copy()
+        pivot = plot_df.pivot_table(index=country_col, columns=freq_col, values="OBS_VALUE", aggfunc="mean").fillna(0)
+        freq_order = sorted(list(pivot.columns), key=_frequency_rank)
+        pivot = pivot[freq_order]
+
+        sort_base = freq_order[0] if freq_order else None
+        if sort_base is not None:
+            pivot = pivot.assign(_sort_high=pivot[sort_base], _sort_total=pivot.sum(axis=1))
+            pivot = pivot.sort_values(["_sort_high", "_sort_total"], ascending=False).drop(
+                columns=["_sort_high", "_sort_total"]
+            )
+
+        x = list(range(len(pivot.index)))
+        fig_width = max(10, len(x) * 0.35)
+        fig, ax = plt.subplots(figsize=(fig_width, 6))
+        bottoms = [0.0] * len(x)
+        for freq in freq_order:
+            vals = pivot[freq].tolist()
+            ax.bar(x, vals, bottom=bottoms, label=freq)
+            bottoms = [b + v for b, v in zip(bottoms, vals)]
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(pivot.index, rotation=90)
+        ax.set_ylabel("Share (%)")
+        ax.set_xlabel("Country")
+        ax.set_title("Alcohol consumption by country (stacked by frequency, high frequency at the bottom)")
+        ax.legend(loc="upper right", title="Frequency type")
+        fig.tight_layout()
+        return fig
+
+    @render.plot
+    def satisfaction_chart():
+        if load_error:
+            return _empty_plot(f"Data loading failed: {load_error}")
+        data = satisfaction_country()
+        if data.empty:
+            return _empty_plot("No sex satisfaction data for the selected sex.")
+        country_col = "geo_label" if "geo_label" in data.columns else "geo"
+        plot_df = data.sort_values("OBS_VALUE", ascending=False)
+        x = list(range(len(plot_df)))
+        fig_width = max(10, len(x) * 0.35)
+        fig, ax = plt.subplots(figsize=(fig_width, 6))
+        ax.bar(x, plot_df["OBS_VALUE"], color="#3D7EA6")
+        ax.set_xticks(x)
+        ax.set_xticklabels(plot_df[country_col], rotation=90)
+        ax.set_ylabel("Share (%)")
+        ax.set_xlabel("Country")
+        ax.set_title("Sex satisfaction level by country (no age-group split)")
+        fig.tight_layout()
+        return fig
+
+    @render.plot
+    def scatter_chart():
+        if load_error:
+            return _empty_plot(f"Data loading failed: {load_error}")
+        alcohol = alcohol_selected()
+        sat = satisfaction_country()
+        if alcohol.empty or sat.empty:
+            return _empty_plot("Not enough overlapping country data for this scatterplot.")
+        geo_col = "geo"
+        alcohol_total = alcohol.groupby(geo_col, as_index=False)["OBS_VALUE"].sum().rename(
+            columns={"OBS_VALUE": "alcohol_value"}
+        )
+        sat_country = sat.groupby(geo_col, as_index=False)["OBS_VALUE"].mean().rename(
+            columns={"OBS_VALUE": "satisfaction_value"}
+        )
+        merged = alcohol_total.merge(sat_country, on=geo_col, how="inner")
+        if merged.empty:
+            return _empty_plot("No country overlap between alcohol and satisfaction datasets.")
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.scatter(merged["alcohol_value"], merged["satisfaction_value"], color="#2D6A4F")
+        ax.set_xlabel("Alcohol consumption share (%)")
+        ax.set_ylabel("Sex satisfaction share (%)")
+        ax.set_title("Alcohol consumption vs sex satisfaction by country")
+        fig.tight_layout()
+        return fig
+
+
+app = App(app_ui, server)
