@@ -49,27 +49,6 @@ def _age_code_rank(code: str) -> int:
     return order.get(str(code).upper(), 99)
 
 
-def _sex_display_from_code(code: str) -> str:
-    c = str(code).strip().upper()
-    if c == "M":
-        return "Men"
-    if c == "F":
-        return "Women"
-    return str(code)
-
-
-def _frequency_display_from_row(row: pd.Series) -> str:
-    label = row.get("frequenc_label")
-    if pd.notna(label):
-        return str(label)
-    code = str(row.get("frequenc", "")).strip().upper()
-    fallback = {
-        "EVERY_DAY": "Every day",
-        "EVERY_WEEK": "Every week",
-        "EVERY_MONTH": "Every month",
-        "LESS_THAN_ONCE_A_MONTH": "Less than once a month",
-    }
-    return fallback.get(code, code)
 
 
 def _load_data():
