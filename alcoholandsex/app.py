@@ -128,13 +128,21 @@ def _normalize_selected_codes(
 
 sex_choices = _choices(alcohol_df, "sex", "sex_label")
 age_choices = _choices(alcohol_df, "age", "age_label")
+frequency_choices = _choices(alcohol_df, "frequenc", "frequenc_label", by_frequency=True)
 sex_default = list(sex_choices.values())
 age_default = list(age_choices.values())
+frequency_default = list(frequency_choices.values())
 
 app_ui = ui.page_sidebar(
     ui.sidebar(
         ui.input_checkbox_group("sex", "Sex", choices=sex_choices, selected=sex_default),
         ui.input_checkbox_group("age", "Age group", choices=age_choices, selected=age_default),
+        ui.input_checkbox_group(
+            "frequency_types",
+            "Frequency type",
+            choices=frequency_choices,
+            selected=frequency_default,
+        ),
         title="Filter controls",
     ),
     ui.card(
@@ -208,10 +216,15 @@ def server(input, output, session):
         data = alcohol_df.copy()
         selected_sex = _normalize_selected_codes(input.sex(), alcohol_df, "sex", "sex_label")
         selected_age = _normalize_selected_codes(input.age(), alcohol_df, "age", "age_label")
+        selected_freq = _normalize_selected_codes(
+            input.frequency_types(), alcohol_df, "frequenc", "frequenc_label"
+        )
         if selected_sex:
             data = data.loc[data["sex"].isin(selected_sex)]
         if selected_age:
             data = data.loc[data["age"].isin(selected_age)]
+        if selected_freq:
+            data = data.loc[data["frequenc"].isin(selected_freq)]
         if data.empty:
             return data
         group_cols = ["geo", "frequenc"]
@@ -243,7 +256,7 @@ def server(input, output, session):
             return _empty_plot(f"Data loading failed: {load_error}")
         data = alcohol_selected()
         if data.empty:
-            return _empty_plot("No alcohol data for the selected sex and age group.")
+            return _empty_plot("No alcohol data for the selected sex, age group, and frequency type.")
 
         country_col = "geo_label" if "geo_label" in data.columns else "geo"
         freq_col = "frequenc_label" if "frequenc_label" in data.columns else "frequenc"
@@ -338,12 +351,12 @@ def server(input, output, session):
 
         fig = px.scatter(
             merged,
-            x="alcohol_value",
-            y="satisfaction_value",
+            x="satisfaction_value",
+            y="alcohol_value",
             hover_name=hover_col,
             labels={
-                "alcohol_value": "Alcohol consumption share (%)",
                 "satisfaction_value": "Sex satisfaction share (%)",
+                "alcohol_value": "Alcohol consumption share (%)",
             },
             title="Alcohol consumption vs sex satisfaction by country",
         )
