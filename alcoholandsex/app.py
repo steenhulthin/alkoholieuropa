@@ -89,6 +89,43 @@ def _choices(df: pd.DataFrame, code_col: str, label_col: str, by_frequency: bool
     return {f"{row.label} ({row.code})": row.code for row in pairs.itertuples(index=False)}
 
 
+def _normalize_selected_codes(
+    selected: list[str] | tuple[str, ...] | str | None,
+    df: pd.DataFrame,
+    code_col: str,
+    label_col: str,
+) -> list[str]:
+    if not selected or df.empty or code_col not in df.columns:
+        return []
+    if isinstance(selected, str):
+        selected = [selected]
+    labels = df[label_col] if label_col in df.columns else df[code_col]
+    pairs = (
+        pd.DataFrame({"code": df[code_col].astype(str), "label": labels.astype(str)})
+        .dropna(subset=["code"])
+        .drop_duplicates()
+    )
+    code_lookup: dict[str, str] = {}
+    for row in pairs.itertuples(index=False):
+        code = str(row.code)
+        label = str(row.label)
+        code_lookup[code] = code
+        code_lookup[label] = code
+        code_lookup[f"{label} ({code})"] = code
+
+    out: list[str] = []
+    for item in selected:
+        item_str = str(item)
+        if item_str in code_lookup:
+            out.append(code_lookup[item_str])
+            continue
+        if item_str.endswith(")") and "(" in item_str:
+            parsed_code = item_str.rsplit("(", 1)[1].rstrip(")").strip()
+            if parsed_code in code_lookup:
+                out.append(code_lookup[parsed_code])
+    return sorted(set(out))
+
+
 sex_choices = _choices(alcohol_df, "sex", "sex_label")
 age_choices = _choices(alcohol_df, "age", "age_label")
 sex_default = list(sex_choices.values())
@@ -169,8 +206,8 @@ def server(input, output, session):
         if alcohol_df.empty:
             return alcohol_df
         data = alcohol_df.copy()
-        selected_sex = input.sex()
-        selected_age = input.age()
+        selected_sex = _normalize_selected_codes(input.sex(), alcohol_df, "sex", "sex_label")
+        selected_age = _normalize_selected_codes(input.age(), alcohol_df, "age", "age_label")
         if selected_sex:
             data = data.loc[data["sex"].isin(selected_sex)]
         if selected_age:
@@ -188,7 +225,7 @@ def server(input, output, session):
     def satisfaction_country():
         if satisfaction_df.empty:
             return satisfaction_df
-        selected_sex = input.sex()
+        selected_sex = _normalize_selected_codes(input.sex(), satisfaction_df, "sex", "sex_label")
         data = satisfaction_df.copy()
         if selected_sex:
             data = data.loc[data["sex"].isin(selected_sex)]
