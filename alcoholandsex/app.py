@@ -18,7 +18,7 @@ def _empty_plot(message: str) -> go.Figure:
     fig.add_annotation(text=message, x=0.5, y=0.5, showarrow=False, xref="paper", yref="paper")
     fig.update_xaxes(visible=False)
     fig.update_yaxes(visible=False)
-    fig.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=20))
+    fig.update_layout(height=700, margin=dict(l=20, r=20, t=60, b=20))
     return fig
 
 
@@ -101,28 +101,21 @@ app_ui = ui.page_sidebar(
         title="Filter controls",
     ),
     ui.card(
-        ui.h2("Alcohol Consumption and Sex Satisfaction in Europe"),
-        ui.p("Top bar with headline and context. Sidebar filters control all charts."),
-    ),
-    ui.card(
         ui.card_header("Alcohol consumption by country (highest shares first)"),
         output_widget("alcohol_chart"),
-        full_screen=True,
     ),
     ui.card(
         ui.card_header("Sex satisfaction level by country"),
         ui.p("Not divided into age groups in this dataset (population aged 16+)."),
         output_widget("satisfaction_chart"),
-        full_screen=True,
     ),
     ui.card(
         ui.card_header("Alcohol consumption vs sex satisfaction (scatterplot)"),
         output_widget("scatter_chart"),
-        full_screen=True,
     ),
     ui.include_css(app_dir / "styles.css"),
     title="Alcohol and Sex Dashboard",
-    fillable=True,
+    fillable=False,
 )
 
 
@@ -198,7 +191,12 @@ def server(input, output, session):
             labels={country_col: "Country", "share": "Share (%)", "frequency": "Frequency type"},
             title="Alcohol consumption by country (stacked by frequency, high frequency at the bottom)",
         )
-        fig.update_layout(barmode="stack", xaxis_tickangle=-55, legend_title_text="Frequency type")
+        fig.update_layout(
+            barmode="stack",
+            xaxis_tickangle=-55,
+            legend_title_text="Frequency type",
+            height=780,
+        )
         return fig
 
     @render_widget
@@ -218,7 +216,7 @@ def server(input, output, session):
             title="Sex satisfaction level by country (no age-group split)",
         )
         fig.update_traces(marker_color="#3D7EA6")
-        fig.update_layout(xaxis_tickangle=-55, showlegend=False)
+        fig.update_layout(xaxis_tickangle=-55, showlegend=False, height=780)
         return fig
 
     @render_widget
@@ -258,6 +256,7 @@ def server(input, output, session):
             title="Alcohol consumption vs sex satisfaction by country",
         )
         fig.update_traces(marker=dict(color="#2D6A4F", size=9))
+        fig.update_layout(height=780)
         return fig
 
 
