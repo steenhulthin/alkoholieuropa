@@ -49,8 +49,6 @@ def _age_code_rank(code: str) -> int:
     return order.get(str(code).upper(), 99)
 
 
-
-
 def _load_data():
     alcohol_raw = load_eurostat("hlth_ehis_al1c")
     alcohol_labeled = attach_labels(alcohol_raw, "hlth_ehis_al1c")
@@ -86,7 +84,13 @@ except Exception as exc:
     load_error = str(exc)
 
 
-def _choices(df: pd.DataFrame, code_col: str, label_col: str, by_frequency: bool = False):
+def _choices(
+    df: pd.DataFrame,
+    code_col: str,
+    label_col: str,
+    by_frequency: bool = False,
+    by_age: bool = False,
+):
     if df.empty or code_col not in df.columns:
         return {}
     labels = df[label_col] if label_col in df.columns else df[code_col]
@@ -144,7 +148,7 @@ def _normalize_selected_codes(
 
 
 sex_choices = _choices(alcohol_df, "sex", "sex_label")
-age_choices = _choices(alcohol_df, "age", "age_label")
+age_choices = _choices(alcohol_df, "age", "age_label", by_age=True)
 frequency_choices = _choices(alcohol_df, "frequenc", "frequenc_label", by_frequency=True)
 sex_default = list(sex_choices.values())
 age_default = list(age_choices.values())
