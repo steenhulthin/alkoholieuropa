@@ -101,7 +101,7 @@ app_ui = ui.page_sidebar(
         title="Filter controls",
     ),
     ui.card(
-        ui.card_header("Alcohol consumption by country (highest shares first)"),
+        ui.card_header("Alcohol habits by country"),
         ui.card_body(
             output_widget("alcohol_chart", width="100%", height="100%"),
             class_="p-0",
@@ -233,7 +233,7 @@ def server(input, output, session):
             color="frequency",
             category_orders={"frequency": freq_order, country_col: list(pivot.index)},
             labels={country_col: "Country", "share": "Share (%)", "frequency": "Frequency type"},
-            title="Alcohol consumption by country (stacked by frequency, high frequency at the bottom)",
+            title="Alcohol habits by country",
         )
         fig.update_layout(
             barmode="stack",
