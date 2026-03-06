@@ -222,26 +222,37 @@ app_ui = ui.page_sidebar(
             class_="p-0",
         ),
     ),
-    ui.card(
-        ui.card_header("Alcohol habits by country"),
-        ui.card_body(
-            output_widget("alcohol_chart", width="100%", height="100%"),
-            class_="p-0",
+    ui.navset_tab(
+        ui.nav_panel(
+            "Alcohol Habits",
+            ui.card(
+                ui.card_header("Alcohol habits by country"),
+                ui.card_body(
+                    output_widget("alcohol_chart", width="100%", height="100%"),
+                    class_="p-0",
+                ),
+            ),
         ),
-    ),
-    ui.card(
-        ui.card_header("Sex satisfaction level by country"),
-        ui.p("Not divided into age groups in this dataset (population aged 16+)."),
-        ui.card_body(
-            output_widget("satisfaction_chart", width="100%", height="100%"),
-            class_="p-0",
+        ui.nav_panel(
+            "Sex Satisfaction",
+            ui.card(
+                ui.card_header("Sex satisfaction level by country"),
+                ui.p("Not divided into age groups in this dataset (population aged 16+)."),
+                ui.card_body(
+                    output_widget("satisfaction_chart", width="100%", height="100%"),
+                    class_="p-0",
+                ),
+            ),
         ),
-    ),
-    ui.card(
-        ui.card_header("Alcohol consumption vs sex satisfaction (scatterplot)"),
-        ui.card_body(
-            output_widget("scatter_chart", width="100%", height="100%"),
-            class_="p-0",
+        ui.nav_panel(
+            "Relationship",
+            ui.card(
+                ui.card_header("Alcohol consumption vs sex satisfaction (scatterplot)"),
+                ui.card_body(
+                    output_widget("scatter_chart", width="100%", height="100%"),
+                    class_="p-0",
+                ),
+            ),
         ),
     ),
     ui.tags.script(
