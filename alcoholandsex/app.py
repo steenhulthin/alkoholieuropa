@@ -37,6 +37,41 @@ def _frequency_rank(label: str) -> int:
     return 99
 
 
+def _age_code_rank(code: str) -> int:
+    order = {
+        "Y15-24": 0,
+        "Y25-34": 1,
+        "Y35-44": 2,
+        "Y45-64": 3,
+        "Y65-74": 4,
+        "Y_GE75": 5,
+    }
+    return order.get(str(code).upper(), 99)
+
+
+def _sex_display_from_code(code: str) -> str:
+    c = str(code).strip().upper()
+    if c == "M":
+        return "Men"
+    if c == "F":
+        return "Women"
+    return str(code)
+
+
+def _frequency_display_from_row(row: pd.Series) -> str:
+    label = row.get("frequenc_label")
+    if pd.notna(label):
+        return str(label)
+    code = str(row.get("frequenc", "")).strip().upper()
+    fallback = {
+        "EVERY_DAY": "Every day",
+        "EVERY_WEEK": "Every week",
+        "EVERY_MONTH": "Every month",
+        "LESS_THAN_ONCE_A_MONTH": "Less than once a month",
+    }
+    return fallback.get(code, code)
+
+
 def _load_data():
     alcohol_raw = load_eurostat("hlth_ehis_al1c")
     alcohol_labeled = attach_labels(alcohol_raw, "hlth_ehis_al1c")
@@ -83,6 +118,9 @@ def _choices(df: pd.DataFrame, code_col: str, label_col: str, by_frequency: bool
     )
     if by_frequency:
         pairs["rank"] = pairs["label"].map(_frequency_rank)
+        pairs = pairs.sort_values(["rank", "label"])
+    elif by_age:
+        pairs["rank"] = pairs["code"].map(_age_code_rank)
         pairs = pairs.sort_values(["rank", "label"])
     else:
         pairs = pairs.sort_values("label")
