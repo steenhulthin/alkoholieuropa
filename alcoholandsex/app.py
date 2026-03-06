@@ -18,7 +18,7 @@ def _empty_plot(message: str) -> go.Figure:
     fig.add_annotation(text=message, x=0.5, y=0.5, showarrow=False, xref="paper", yref="paper")
     fig.update_xaxes(visible=False)
     fig.update_yaxes(visible=False)
-    fig.update_layout(height=700, margin=dict(l=20, r=20, t=60, b=20))
+    fig.update_layout(height=700, width=None, autosize=True, margin=dict(l=20, r=20, t=60, b=20))
     return fig
 
 
@@ -102,16 +102,60 @@ app_ui = ui.page_sidebar(
     ),
     ui.card(
         ui.card_header("Alcohol consumption by country (highest shares first)"),
-        output_widget("alcohol_chart"),
+        ui.card_body(
+            output_widget("alcohol_chart", width="100%", height="100%"),
+            class_="p-0",
+        ),
     ),
     ui.card(
         ui.card_header("Sex satisfaction level by country"),
         ui.p("Not divided into age groups in this dataset (population aged 16+)."),
-        output_widget("satisfaction_chart"),
+        ui.card_body(
+            output_widget("satisfaction_chart", width="100%", height="100%"),
+            class_="p-0",
+        ),
     ),
     ui.card(
         ui.card_header("Alcohol consumption vs sex satisfaction (scatterplot)"),
-        output_widget("scatter_chart"),
+        ui.card_body(
+            output_widget("scatter_chart", width="100%", height="100%"),
+            class_="p-0",
+        ),
+    ),
+    ui.tags.script(
+        """
+        (() => {
+          const observed = new WeakSet();
+          const ro = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+              const plotEl = entry.target.querySelector('.js-plotly-plot') || entry.target;
+              if (window.Plotly && plotEl) {
+                window.requestAnimationFrame(() => {
+                  try { window.Plotly.Plots.resize(plotEl); } catch (_) {}
+                });
+              }
+            }
+          });
+
+          const watchPlots = () => {
+            document.querySelectorAll('#alcohol_chart, #satisfaction_chart, #scatter_chart, .js-plotly-plot')
+              .forEach((el) => {
+                if (!observed.has(el)) {
+                  observed.add(el);
+                  ro.observe(el);
+                }
+                if (window.Plotly && el.classList.contains('js-plotly-plot')) {
+                  try { window.Plotly.Plots.resize(el); } catch (_) {}
+                }
+              });
+          };
+
+          watchPlots();
+          new MutationObserver(watchPlots).observe(document.body, { childList: true, subtree: true });
+          window.addEventListener('load', watchPlots, { once: true });
+          window.addEventListener('resize', watchPlots);
+        })();
+        """
     ),
     ui.include_css(app_dir / "styles.css"),
     title="Alcohol and Sex Dashboard",
@@ -195,7 +239,11 @@ def server(input, output, session):
             barmode="stack",
             xaxis_tickangle=-55,
             legend_title_text="Frequency type",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            width=None,
+            autosize=True,
             height=780,
+            margin=dict(l=50, r=20, t=90, b=140),
         )
         return fig
 
@@ -216,7 +264,14 @@ def server(input, output, session):
             title="Sex satisfaction level by country (no age-group split)",
         )
         fig.update_traces(marker_color="#3D7EA6")
-        fig.update_layout(xaxis_tickangle=-55, showlegend=False, height=780)
+        fig.update_layout(
+            xaxis_tickangle=-55,
+            showlegend=False,
+            width=None,
+            autosize=True,
+            height=780,
+            margin=dict(l=50, r=20, t=80, b=140),
+        )
         return fig
 
     @render_widget
@@ -256,7 +311,13 @@ def server(input, output, session):
             title="Alcohol consumption vs sex satisfaction by country",
         )
         fig.update_traces(marker=dict(color="#2D6A4F", size=9))
-        fig.update_layout(height=780)
+        fig.update_layout(
+            width=None,
+            autosize=True,
+            height=780,
+            showlegend=False,
+            margin=dict(l=60, r=20, t=80, b=60),
+        )
         return fig
 
 
