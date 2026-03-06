@@ -261,6 +261,7 @@ def _apply_project_filters(
     unwanted_freq_codes = {"NEVER", "N12M"}
     unwanted_freq_labels = {"never", "not in the last 12 months"}
     allowed_age_codes = {"Y15-24", "Y25-34", "Y35-44", "Y45-64", "Y65-74", "Y_GE75"}
+    removed_sex_codes = {"T"}
 
     if not filtered_obs.empty:
         if "geo" in filtered_obs.columns:
@@ -270,6 +271,8 @@ def _apply_project_filters(
             filtered_obs = filtered_obs.loc[~geo_text.str.contains("european union", na=False)]
         if "age" in filtered_obs.columns:
             filtered_obs = filtered_obs.loc[filtered_obs["age"].isin(allowed_age_codes)]
+        if "sex" in filtered_obs.columns:
+            filtered_obs = filtered_obs.loc[~filtered_obs["sex"].isin(removed_sex_codes)]
 
         if dataset_id.upper() == "HLTH_EHIS_AL1C":
             if "frequenc" in filtered_obs.columns:
@@ -291,6 +294,13 @@ def _apply_project_filters(
         if is_age.any():
             remove_age = is_age & (~filtered_codelists["code"].isin(allowed_age_codes))
             filtered_codelists = filtered_codelists.loc[~remove_age]
+        is_sex = filtered_codelists["codelist_id"].eq("SEX")
+        if is_sex.any():
+            sex_labels = filtered_codelists["label_en"].astype(str).str.strip().str.lower()
+            remove_sex = is_sex & (
+                filtered_codelists["code"].isin(removed_sex_codes) | sex_labels.eq("total")
+            )
+            filtered_codelists = filtered_codelists.loc[~remove_sex]
 
         if dataset_id.upper() == "HLTH_EHIS_AL1C":
             is_freq = filtered_codelists["codelist_id"].eq("FREQUENC")
