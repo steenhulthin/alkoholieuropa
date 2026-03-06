@@ -91,21 +91,13 @@ def _choices(df: pd.DataFrame, code_col: str, label_col: str, by_frequency: bool
 
 sex_choices = _choices(alcohol_df, "sex", "sex_label")
 age_choices = _choices(alcohol_df, "age", "age_label")
-frequency_choices = _choices(alcohol_df, "frequenc", "frequenc_label", by_frequency=True)
-sex_default = next(iter(sex_choices.values()), "")
-age_default = next(iter(age_choices.values()), "")
-frequency_default = list(frequency_choices.values())
+sex_default = list(sex_choices.values())
+age_default = list(age_choices.values())
 
 app_ui = ui.page_sidebar(
     ui.sidebar(
-        ui.input_select("sex", "Sex", choices=sex_choices, selected=sex_default),
-        ui.input_select("age", "Age group", choices=age_choices, selected=age_default),
-        ui.input_checkbox_group(
-            "frequency_types",
-            "Frequency type",
-            choices=frequency_choices,
-            selected=frequency_default,
-        ),
+        ui.input_checkbox_group("sex", "Sex", choices=sex_choices, selected=sex_default),
+        ui.input_checkbox_group("age", "Age group", choices=age_choices, selected=age_default),
         title="Filter controls",
     ),
     ui.card(
@@ -139,28 +131,37 @@ def server(input, output, session):
     def alcohol_selected():
         if alcohol_df.empty:
             return alcohol_df
-        selected_freq = input.frequency_types()
         data = alcohol_df.copy()
-        if input.sex():
-            sex_filtered = data.loc[data["sex"] == input.sex()]
-            if not sex_filtered.empty:
-                data = sex_filtered
-        if input.age():
-            age_filtered = data.loc[data["age"] == input.age()]
-            if not age_filtered.empty:
-                data = age_filtered
-        if selected_freq:
-            freq_filtered = data.loc[data["frequenc"].isin(selected_freq)]
-            if not freq_filtered.empty:
-                data = freq_filtered
-        return data
+        selected_sex = input.sex()
+        selected_age = input.age()
+        if selected_sex:
+            data = data.loc[data["sex"].isin(selected_sex)]
+        if selected_age:
+            data = data.loc[data["age"].isin(selected_age)]
+        if data.empty:
+            return data
+        group_cols = ["geo", "frequenc"]
+        if "geo_label" in data.columns:
+            group_cols.append("geo_label")
+        if "frequenc_label" in data.columns:
+            group_cols.append("frequenc_label")
+        return data.groupby(group_cols, as_index=False)["OBS_VALUE"].mean()
 
     @reactive.calc
     def satisfaction_country():
         if satisfaction_df.empty:
             return satisfaction_df
-        data = satisfaction_df.loc[satisfaction_df["sex"] == input.sex()].copy()
-        return data.sort_values("OBS_VALUE", ascending=False)
+        selected_sex = input.sex()
+        data = satisfaction_df.copy()
+        if selected_sex:
+            data = data.loc[data["sex"].isin(selected_sex)]
+        if data.empty:
+            return data
+        country_cols = ["geo"]
+        if "geo_label" in data.columns:
+            country_cols.append("geo_label")
+        grouped = data.groupby(country_cols, as_index=False)["OBS_VALUE"].mean()
+        return grouped.sort_values("OBS_VALUE", ascending=False)
 
     @render_widget
     def alcohol_chart():
@@ -168,7 +169,7 @@ def server(input, output, session):
             return _empty_plot(f"Data loading failed: {load_error}")
         data = alcohol_selected()
         if data.empty:
-            return _empty_plot("No alcohol data for the selected sex, age group, and frequency types.")
+            return _empty_plot("No alcohol data for the selected sex and age group.")
 
         country_col = "geo_label" if "geo_label" in data.columns else "geo"
         freq_col = "frequenc_label" if "frequenc_label" in data.columns else "frequenc"
