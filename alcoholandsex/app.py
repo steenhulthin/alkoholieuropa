@@ -49,6 +49,55 @@ def _age_code_rank(code: str) -> int:
     return order.get(str(code).upper(), 99)
 
 
+_ISO3_BY_GEO = {
+    "AL": "ALB",
+    "AT": "AUT",
+    "BA": "BIH",
+    "BE": "BEL",
+    "BG": "BGR",
+    "CH": "CHE",
+    "CY": "CYP",
+    "CZ": "CZE",
+    "DE": "DEU",
+    "DK": "DNK",
+    "EE": "EST",
+    "EL": "GRC",
+    "ES": "ESP",
+    "FI": "FIN",
+    "FR": "FRA",
+    "HR": "HRV",
+    "HU": "HUN",
+    "IE": "IRL",
+    "IS": "ISL",
+    "IT": "ITA",
+    "LI": "LIE",
+    "LT": "LTU",
+    "LU": "LUX",
+    "LV": "LVA",
+    "ME": "MNE",
+    "MK": "MKD",
+    "MT": "MLT",
+    "NL": "NLD",
+    "NO": "NOR",
+    "PL": "POL",
+    "PT": "PRT",
+    "RO": "ROU",
+    "RS": "SRB",
+    "SE": "SWE",
+    "SI": "SVN",
+    "SK": "SVK",
+    "TR": "TUR",
+    "UK": "GBR",
+    "XK": "XKX",
+}
+
+
+def _geo_to_iso3(code: str) -> str | None:
+    if not code:
+        return None
+    return _ISO3_BY_GEO.get(str(code).strip().upper())
+
+
 def _load_data():
     alcohol_raw = load_eurostat("hlth_ehis_al1c")
     alcohol_labeled = attach_labels(alcohol_raw, "hlth_ehis_al1c")
@@ -167,6 +216,13 @@ app_ui = ui.page_sidebar(
         title="Filter controls",
     ),
     ui.card(
+        ui.card_header("Country map (click a country to filter all charts)"),
+        ui.card_body(
+            output_widget("country_map", width="100%", height="100%"),
+            class_="p-0",
+        ),
+    ),
+    ui.card(
         ui.card_header("Alcohol habits by country"),
         ui.card_body(
             output_widget("alcohol_chart", width="100%", height="100%"),
@@ -204,7 +260,7 @@ app_ui = ui.page_sidebar(
           });
 
           const watchPlots = () => {
-            document.querySelectorAll('#alcohol_chart, #satisfaction_chart, #scatter_chart, .js-plotly-plot')
+            document.querySelectorAll('#country_map, #alcohol_chart, #satisfaction_chart, #scatter_chart, .js-plotly-plot')
               .forEach((el) => {
                 if (!observed.has(el)) {
                   observed.add(el);
@@ -216,8 +272,37 @@ app_ui = ui.page_sidebar(
               });
           };
 
+          const extractCountry = (pt) => {
+            if (!pt) return null;
+            const cd = pt.customdata;
+            if (Array.isArray(cd) && cd.length) return cd[0];
+            if (typeof cd === 'string') return cd;
+            return null;
+          };
+
+          const bindClick = (containerId, inputId) => {
+            const root = document.getElementById(containerId);
+            const plot = root ? root.querySelector('.js-plotly-plot') : null;
+            if (!plot) return;
+            const marker = `bound_${inputId}`;
+            if (plot.dataset[marker]) return;
+            plot.dataset[marker] = "1";
+
+            plot.on('plotly_click', (evt) => {
+              const country = extractCountry(evt?.points?.[0]);
+              if (!country) return;
+              Shiny.setInputValue(inputId, { country, nonce: Date.now() }, { priority: 'event' });
+            });
+          };
+
           watchPlots();
+          bindClick('country_map', 'map_country_click');
+          bindClick('scatter_chart', 'scatter_country_click');
           new MutationObserver(watchPlots).observe(document.body, { childList: true, subtree: true });
+          new MutationObserver(() => {
+            bindClick('country_map', 'map_country_click');
+            bindClick('scatter_chart', 'scatter_country_click');
+          }).observe(document.body, { childList: true, subtree: true });
           window.addEventListener('load', watchPlots, { once: true });
           window.addEventListener('resize', watchPlots);
         })();
@@ -230,8 +315,33 @@ app_ui = ui.page_sidebar(
 
 
 def server(input, output, session):
+    selected_country = reactive.value(None)
+
+    @reactive.effect
+    @reactive.event(input.map_country_click)
+    def _map_country_click():
+        payload = input.map_country_click()
+        if not payload:
+            return
+        country = payload.get("country") if isinstance(payload, dict) else None
+        if not country:
+            return
+        current = selected_country.get()
+        selected_country.set(None if current == country else country)
+
+    @reactive.effect
+    @reactive.event(input.scatter_country_click)
+    def _scatter_country_click():
+        payload = input.scatter_country_click()
+        if not payload:
+            return
+        country = payload.get("country") if isinstance(payload, dict) else None
+        if not country:
+            return
+        selected_country.set(country)
+
     @reactive.calc
-    def alcohol_selected():
+    def alcohol_base():
         if alcohol_df.empty:
             return alcohol_df
         data = alcohol_df.copy()
@@ -256,6 +366,16 @@ def server(input, output, session):
         return data.groupby(group_cols, as_index=False)["OBS_VALUE"].mean()
 
     @reactive.calc
+    def alcohol_selected():
+        data = alcohol_base()
+        if data.empty:
+            return data
+        country = selected_country.get()
+        if country:
+            data = data.loc[data["geo"] == country]
+        return data
+
+    @reactive.calc
     def satisfaction_country():
         if satisfaction_df.empty:
             return satisfaction_df
@@ -263,6 +383,9 @@ def server(input, output, session):
         data = satisfaction_df.copy()
         if selected_sex:
             data = data.loc[data["sex"].isin(selected_sex)]
+        country = selected_country.get()
+        if country:
+            data = data.loc[data["geo"] == country]
         if data.empty:
             return data
         country_cols = ["geo"]
@@ -270,6 +393,67 @@ def server(input, output, session):
             country_cols.append("geo_label")
         grouped = data.groupby(country_cols, as_index=False)["OBS_VALUE"].mean()
         return grouped.sort_values("OBS_VALUE", ascending=False)
+
+    @render_widget
+    def country_map():
+        if load_error:
+            return _empty_plot(f"Data loading failed: {load_error}")
+
+        data = alcohol_base()
+        if data.empty:
+            return _empty_plot("No data available for the selected filters.")
+
+        country_cols = ["geo"]
+        if "geo_label" in data.columns:
+            country_cols.append("geo_label")
+        map_df = data.groupby(country_cols, as_index=False)["OBS_VALUE"].mean()
+        map_df["iso3"] = map_df["geo"].map(_geo_to_iso3)
+        map_df = map_df.dropna(subset=["iso3"])
+        if map_df.empty:
+            return _empty_plot("No mappable country codes for current filters.")
+
+        hover_col = "geo_label" if "geo_label" in map_df.columns else "geo"
+        fig = px.choropleth(
+            map_df,
+            locations="iso3",
+            color="OBS_VALUE",
+            hover_name=hover_col,
+            custom_data=["geo"],
+            color_continuous_scale="Blues",
+            labels={"OBS_VALUE": "Alcohol habits share (%)"},
+        )
+        fig.update_geos(
+            scope="europe",
+            showcountries=True,
+            countrycolor="white",
+            showcoastlines=True,
+            coastlinecolor="white",
+            fitbounds="locations",
+        )
+        fig.update_layout(
+            height=520,
+            margin=dict(l=10, r=10, t=30, b=10),
+            coloraxis_colorbar=dict(title="Share (%)"),
+        )
+
+        current_country = selected_country.get()
+        if current_country:
+            selected_row = map_df.loc[map_df["geo"] == current_country]
+            if not selected_row.empty:
+                fig.add_trace(
+                    go.Choropleth(
+                        locations=selected_row["iso3"],
+                        z=[1] * len(selected_row),
+                        customdata=selected_row[["geo"]].to_numpy(),
+                        locationmode="ISO-3",
+                        showscale=False,
+                        colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0)"]],
+                        marker_line_color="#111111",
+                        marker_line_width=3,
+                        hoverinfo="skip",
+                    )
+                )
+        return fig
 
     @render_widget
     def alcohol_chart():
@@ -375,6 +559,7 @@ def server(input, output, session):
             x="satisfaction_value",
             y="alcohol_value",
             hover_name=hover_col,
+            custom_data=["geo"],
             labels={
                 "satisfaction_value": "Sex satisfaction share (%)",
                 "alcohol_value": "Alcohol consumption share (%)",
