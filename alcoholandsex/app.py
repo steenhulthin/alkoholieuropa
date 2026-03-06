@@ -1,6 +1,8 @@
-import matplotlib.pyplot as plt
 import pandas as pd
-from shiny import App, reactive, render, ui
+import plotly.express as px
+import plotly.graph_objects as go
+from shiny import App, reactive, ui
+from shinywidgets import output_widget, render_widget
 
 from shared import (
     app_dir,
@@ -8,13 +10,17 @@ from shared import (
     filter_reference_slice,
     latest_snapshot,
     load_eurostat,
+    remove_aggregates,
+    remove_unwanted_alcohol_frequencies,
 )
 
 
-def _empty_plot(message: str):
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.text(0.5, 0.5, message, ha="center", va="center")
-    ax.axis("off")
+def _empty_plot(message: str) -> go.Figure:
+    fig = go.Figure()
+    fig.add_annotation(text=message, x=0.5, y=0.5, showarrow=False, xref="paper", yref="paper")
+    fig.update_xaxes(visible=False)
+    fig.update_yaxes(visible=False)
+    fig.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=20))
     return fig
 
 
@@ -44,6 +50,7 @@ def _load_data():
         alcohol_filtered,
         group_cols=["frequenc", "sex", "age", "geo"],
     )
+    alcohol_latest = remove_unwanted_alcohol_frequencies(remove_aggregates(alcohol_latest))
 
     sat_raw = load_eurostat("sdg_03_20")
     sat_labeled = attach_labels(sat_raw, "sdg_03_20")
@@ -55,6 +62,7 @@ def _load_data():
         sat_filtered,
         group_cols=["sex", "geo", "levels"],
     )
+    sat_latest = remove_aggregates(sat_latest)
 
     return alcohol_latest, sat_latest
 
@@ -110,18 +118,18 @@ app_ui = ui.page_sidebar(
     ),
     ui.card(
         ui.card_header("Alcohol consumption by country (highest shares first)"),
-        ui.output_plot("alcohol_chart"),
+        output_widget("alcohol_chart"),
         full_screen=True,
     ),
     ui.card(
         ui.card_header("Sex satisfaction level by country"),
         ui.p("Not divided into age groups in this dataset (population aged 16+)."),
-        ui.output_plot("satisfaction_chart"),
+        output_widget("satisfaction_chart"),
         full_screen=True,
     ),
     ui.card(
         ui.card_header("Alcohol consumption vs sex satisfaction (scatterplot)"),
-        ui.output_plot("scatter_chart"),
+        output_widget("scatter_chart"),
         full_screen=True,
     ),
     ui.include_css(app_dir / "styles.css"),
@@ -158,7 +166,7 @@ def server(input, output, session):
         data = satisfaction_df.loc[satisfaction_df["sex"] == input.sex()].copy()
         return data.sort_values("OBS_VALUE", ascending=False)
 
-    @render.plot
+    @render_widget
     def alcohol_chart():
         if load_error:
             return _empty_plot(f"Data loading failed: {load_error}")
@@ -180,25 +188,23 @@ def server(input, output, session):
                 columns=["_sort_high", "_sort_total"]
             )
 
-        x = list(range(len(pivot.index)))
-        fig_width = max(10, len(x) * 0.35)
-        fig, ax = plt.subplots(figsize=(fig_width, 6))
-        bottoms = [0.0] * len(x)
-        for freq in freq_order:
-            vals = pivot[freq].tolist()
-            ax.bar(x, vals, bottom=bottoms, label=freq)
-            bottoms = [b + v for b, v in zip(bottoms, vals)]
-
-        ax.set_xticks(x)
-        ax.set_xticklabels(pivot.index, rotation=90)
-        ax.set_ylabel("Share (%)")
-        ax.set_xlabel("Country")
-        ax.set_title("Alcohol consumption by country (stacked by frequency, high frequency at the bottom)")
-        ax.legend(loc="upper right", title="Frequency type")
-        fig.tight_layout()
+        plot_long = (
+            pivot.reset_index()
+            .melt(id_vars=[country_col], value_vars=freq_order, var_name="frequency", value_name="share")
+        )
+        fig = px.bar(
+            plot_long,
+            x=country_col,
+            y="share",
+            color="frequency",
+            category_orders={"frequency": freq_order, country_col: list(pivot.index)},
+            labels={country_col: "Country", "share": "Share (%)", "frequency": "Frequency type"},
+            title="Alcohol consumption by country (stacked by frequency, high frequency at the bottom)",
+        )
+        fig.update_layout(barmode="stack", xaxis_tickangle=-55, legend_title_text="Frequency type")
         return fig
 
-    @render.plot
+    @render_widget
     def satisfaction_chart():
         if load_error:
             return _empty_plot(f"Data loading failed: {load_error}")
@@ -207,19 +213,18 @@ def server(input, output, session):
             return _empty_plot("No sex satisfaction data for the selected sex.")
         country_col = "geo_label" if "geo_label" in data.columns else "geo"
         plot_df = data.sort_values("OBS_VALUE", ascending=False)
-        x = list(range(len(plot_df)))
-        fig_width = max(10, len(x) * 0.35)
-        fig, ax = plt.subplots(figsize=(fig_width, 6))
-        ax.bar(x, plot_df["OBS_VALUE"], color="#3D7EA6")
-        ax.set_xticks(x)
-        ax.set_xticklabels(plot_df[country_col], rotation=90)
-        ax.set_ylabel("Share (%)")
-        ax.set_xlabel("Country")
-        ax.set_title("Sex satisfaction level by country (no age-group split)")
-        fig.tight_layout()
+        fig = px.bar(
+            plot_df,
+            x=country_col,
+            y="OBS_VALUE",
+            labels={country_col: "Country", "OBS_VALUE": "Share (%)"},
+            title="Sex satisfaction level by country (no age-group split)",
+        )
+        fig.update_traces(marker_color="#3D7EA6")
+        fig.update_layout(xaxis_tickangle=-55, showlegend=False)
         return fig
 
-    @render.plot
+    @render_widget
     def scatter_chart():
         if load_error:
             return _empty_plot(f"Data loading failed: {load_error}")
@@ -237,12 +242,25 @@ def server(input, output, session):
         merged = alcohol_total.merge(sat_country, on=geo_col, how="inner")
         if merged.empty:
             return _empty_plot("No country overlap between alcohol and satisfaction datasets.")
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.scatter(merged["alcohol_value"], merged["satisfaction_value"], color="#2D6A4F")
-        ax.set_xlabel("Alcohol consumption share (%)")
-        ax.set_ylabel("Sex satisfaction share (%)")
-        ax.set_title("Alcohol consumption vs sex satisfaction by country")
-        fig.tight_layout()
+        if "geo_label" in alcohol.columns:
+            geo_labels = alcohol[[geo_col, "geo_label"]].drop_duplicates()
+            merged = merged.merge(geo_labels, on=geo_col, how="left")
+            hover_col = "geo_label"
+        else:
+            hover_col = geo_col
+
+        fig = px.scatter(
+            merged,
+            x="alcohol_value",
+            y="satisfaction_value",
+            hover_name=hover_col,
+            labels={
+                "alcohol_value": "Alcohol consumption share (%)",
+                "satisfaction_value": "Sex satisfaction share (%)",
+            },
+            title="Alcohol consumption vs sex satisfaction by country",
+        )
+        fig.update_traces(marker=dict(color="#2D6A4F", size=9))
         return fig
 
 

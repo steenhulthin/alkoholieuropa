@@ -1,4 +1,5 @@
 faicons
 shiny
 pandas
-matplotlib
+plotly
+shinywidgets
