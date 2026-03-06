@@ -250,6 +250,60 @@ def _write_parquet(df: pd.DataFrame, path: Path) -> None:
         ) from exc
 
 
+def _apply_project_filters(
+    dataset_id: str, observations_df: pd.DataFrame, codelists_df: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Apply project-specific row exclusions during preprocessing."""
+    filtered_obs = observations_df.copy()
+    filtered_codelists = codelists_df.copy()
+
+    eu_geo_codes = {"EU27_2020", "EU28", "EU27_2007"}
+    unwanted_freq_codes = {"NEVER", "N12M"}
+    unwanted_freq_labels = {"never", "not in the last 12 months"}
+    allowed_age_codes = {"Y15-24", "Y25-34", "Y35-44", "Y45-64", "Y65-74", "Y_GE75"}
+
+    if not filtered_obs.empty:
+        if "geo" in filtered_obs.columns:
+            filtered_obs = filtered_obs.loc[~filtered_obs["geo"].isin(eu_geo_codes)]
+        if "geo_label" in filtered_obs.columns:
+            geo_text = filtered_obs["geo_label"].astype(str).str.lower()
+            filtered_obs = filtered_obs.loc[~geo_text.str.contains("european union", na=False)]
+        if "age" in filtered_obs.columns:
+            filtered_obs = filtered_obs.loc[filtered_obs["age"].isin(allowed_age_codes)]
+
+        if dataset_id.upper() == "HLTH_EHIS_AL1C":
+            if "frequenc" in filtered_obs.columns:
+                freq_codes = filtered_obs["frequenc"].astype(str).str.strip().str.upper()
+                filtered_obs = filtered_obs.loc[~freq_codes.isin(unwanted_freq_codes)]
+            if "frequenc_label" in filtered_obs.columns:
+                freq_labels = filtered_obs["frequenc_label"].astype(str).str.strip().str.lower()
+                filtered_obs = filtered_obs.loc[~freq_labels.isin(unwanted_freq_labels)]
+
+    if not filtered_codelists.empty:
+        is_geo = filtered_codelists["codelist_id"].eq("GEO")
+        if is_geo.any():
+            geo_labels = filtered_codelists["label_en"].astype(str).str.lower()
+            remove_geo = is_geo & (
+                filtered_codelists["code"].isin(eu_geo_codes) | geo_labels.str.contains("european union", na=False)
+            )
+            filtered_codelists = filtered_codelists.loc[~remove_geo]
+        is_age = filtered_codelists["codelist_id"].eq("AGE")
+        if is_age.any():
+            remove_age = is_age & (~filtered_codelists["code"].isin(allowed_age_codes))
+            filtered_codelists = filtered_codelists.loc[~remove_age]
+
+        if dataset_id.upper() == "HLTH_EHIS_AL1C":
+            is_freq = filtered_codelists["codelist_id"].eq("FREQUENC")
+            if is_freq.any():
+                freq_labels = filtered_codelists["label_en"].astype(str).str.strip().str.lower()
+                remove_freq = is_freq & (
+                    filtered_codelists["code"].isin(unwanted_freq_codes) | freq_labels.isin(unwanted_freq_labels)
+                )
+                filtered_codelists = filtered_codelists.loc[~remove_freq]
+
+    return filtered_obs, filtered_codelists
+
+
 def transform_file(xml_path: Path, output_dir: Path) -> dict[str, Path]:
     tree = ET.parse(xml_path)
     root = tree.getroot()
@@ -260,6 +314,9 @@ def transform_file(xml_path: Path, output_dir: Path) -> dict[str, Path]:
     dimensions_df = _extract_dimensions(root, dataset)
     observations_df = _extract_observations(root, dataset)
     observations_labeled_df = _attach_labels(observations_df, dimensions_df, codelist_labels)
+    observations_labeled_df, codelists_df = _apply_project_filters(
+        dataset, observations_labeled_df, codelists_df
+    )
 
     output_paths: dict[str, Path] = {}
 

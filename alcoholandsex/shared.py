@@ -131,6 +131,11 @@ def attach_labels(df: pd.DataFrame, dataset_id: str) -> pd.DataFrame:
     for dim, codelist_id in dim_to_codelist.items():
         if dim not in labeled.columns:
             continue
+        valid_codes = set(
+            codelists.loc[codelists["codelist_id"] == codelist_id, "code"].dropna().astype(str).tolist()
+        )
+        if valid_codes:
+            labeled = labeled.loc[labeled[dim].astype(str).isin(valid_codes)]
         lookup = (
             codelists.loc[codelists["codelist_id"] == codelist_id, ["code", "label_en"]]
             .drop_duplicates(subset=["code"])
@@ -168,35 +173,3 @@ def latest_snapshot(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
         return df
     ordered = df.sort_values(["year"])
     return ordered.groupby(group_cols, dropna=False, as_index=False).tail(1)
-
-
-def remove_aggregates(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    out = df.copy()
-    if "geo" in out.columns:
-        out = out.loc[~out["geo"].isin({"EU27_2020", "EU28", "EU27_2007"})]
-    if "geo_label" in out.columns:
-        geo_text = out["geo_label"].astype(str).str.lower()
-        out = out.loc[~geo_text.str.contains("european union", na=False)]
-    return out
-
-
-def remove_unwanted_alcohol_frequencies(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    out = df.copy()
-
-    # Remove only the two exact categories requested:
-    # - Never
-    # - Not in the last 12 months
-    exact_codes = {"NEVER", "N12M"}
-    exact_labels = {"never", "not in the last 12 months"}
-
-    if "frequenc" in out.columns:
-        code_norm = out["frequenc"].astype(str).str.strip().str.upper()
-        out = out.loc[~code_norm.isin(exact_codes)]
-    if "frequenc_label" in out.columns:
-        label_norm = out["frequenc_label"].astype(str).str.strip().str.lower()
-        out = out.loc[~label_norm.isin(exact_labels)]
-    return out

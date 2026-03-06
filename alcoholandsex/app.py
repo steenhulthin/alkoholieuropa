@@ -10,8 +10,6 @@ from shared import (
     filter_reference_slice,
     latest_snapshot,
     load_eurostat,
-    remove_aggregates,
-    remove_unwanted_alcohol_frequencies,
 )
 
 
@@ -50,7 +48,6 @@ def _load_data():
         alcohol_filtered,
         group_cols=["frequenc", "sex", "age", "geo"],
     )
-    alcohol_latest = remove_unwanted_alcohol_frequencies(remove_aggregates(alcohol_latest))
 
     sat_raw = load_eurostat("sdg_03_20")
     sat_labeled = attach_labels(sat_raw, "sdg_03_20")
@@ -62,7 +59,6 @@ def _load_data():
         sat_filtered,
         group_cols=["sex", "geo", "levels"],
     )
-    sat_latest = remove_aggregates(sat_latest)
 
     return alcohol_latest, sat_latest
 
