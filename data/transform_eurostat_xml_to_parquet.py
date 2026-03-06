@@ -262,13 +262,22 @@ def _apply_project_filters(
     unwanted_freq_labels = {"never", "not in the last 12 months"}
     allowed_age_codes = {"Y15-24", "Y25-34", "Y35-44", "Y45-64", "Y65-74", "Y_GE75"}
     removed_sex_codes = {"T"}
+    removed_satisfaction_level_codes = {"EURO"}
 
     if not filtered_obs.empty:
         if "geo" in filtered_obs.columns:
-            filtered_obs = filtered_obs.loc[~filtered_obs["geo"].isin(eu_geo_codes)]
+            geo_codes = filtered_obs["geo"].astype(str).str.strip().str.upper()
+            is_eu = geo_codes.isin(eu_geo_codes)
+            is_euro_area = geo_codes.str.match(r"^EA\d+$", na=False)
+            filtered_obs = filtered_obs.loc[~(is_eu | is_euro_area)]
         if "geo_label" in filtered_obs.columns:
             geo_text = filtered_obs["geo_label"].astype(str).str.lower()
-            filtered_obs = filtered_obs.loc[~geo_text.str.contains("european union", na=False)]
+            filtered_obs = filtered_obs.loc[
+                ~(
+                    geo_text.str.contains("european union", na=False)
+                    | geo_text.str.contains("euro area", na=False)
+                )
+            ]
         if "age" in filtered_obs.columns:
             filtered_obs = filtered_obs.loc[filtered_obs["age"].isin(allowed_age_codes)]
         if "sex" in filtered_obs.columns:
@@ -281,13 +290,24 @@ def _apply_project_filters(
             if "frequenc_label" in filtered_obs.columns:
                 freq_labels = filtered_obs["frequenc_label"].astype(str).str.strip().str.lower()
                 filtered_obs = filtered_obs.loc[~freq_labels.isin(unwanted_freq_labels)]
+        if dataset_id.upper() == "SDG_03_20":
+            if "levels" in filtered_obs.columns:
+                level_codes = filtered_obs["levels"].astype(str).str.strip().str.upper()
+                filtered_obs = filtered_obs.loc[~level_codes.isin(removed_satisfaction_level_codes)]
+            if "levels_label" in filtered_obs.columns:
+                level_labels = filtered_obs["levels_label"].astype(str).str.strip().str.upper()
+                filtered_obs = filtered_obs.loc[~level_labels.isin(removed_satisfaction_level_codes)]
 
     if not filtered_codelists.empty:
         is_geo = filtered_codelists["codelist_id"].eq("GEO")
         if is_geo.any():
+            geo_codes = filtered_codelists["code"].astype(str).str.strip().str.upper()
             geo_labels = filtered_codelists["label_en"].astype(str).str.lower()
             remove_geo = is_geo & (
-                filtered_codelists["code"].isin(eu_geo_codes) | geo_labels.str.contains("european union", na=False)
+                geo_codes.isin(eu_geo_codes)
+                | geo_codes.str.match(r"^EA\d+$", na=False)
+                | geo_labels.str.contains("european union", na=False)
+                | geo_labels.str.contains("euro area", na=False)
             )
             filtered_codelists = filtered_codelists.loc[~remove_geo]
         is_age = filtered_codelists["codelist_id"].eq("AGE")
@@ -310,6 +330,15 @@ def _apply_project_filters(
                     filtered_codelists["code"].isin(unwanted_freq_codes) | freq_labels.isin(unwanted_freq_labels)
                 )
                 filtered_codelists = filtered_codelists.loc[~remove_freq]
+        if dataset_id.upper() == "SDG_03_20":
+            is_levels = filtered_codelists["codelist_id"].eq("LEVELS")
+            if is_levels.any():
+                level_labels = filtered_codelists["label_en"].astype(str).str.strip().str.upper()
+                remove_levels = is_levels & (
+                    filtered_codelists["code"].isin(removed_satisfaction_level_codes)
+                    | level_labels.isin(removed_satisfaction_level_codes)
+                )
+                filtered_codelists = filtered_codelists.loc[~remove_levels]
 
     return filtered_obs, filtered_codelists
 
