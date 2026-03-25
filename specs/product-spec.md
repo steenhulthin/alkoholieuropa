@@ -49,9 +49,11 @@ All available values are populated from the alcohol dataset after labels are att
 - bar chart by country
 - filtered by selected sex and selected country
 - not split by age group in the current dataset usage
+- Frequence type not used for this graph (make user aware)
 
 ### Relationship Tab
 
+- Only show numbers if one or more `Frequency type` is selected.
 - scatterplot comparing country-level alcohol and satisfaction aggregates
 - clicking a point sets the selected country
 
