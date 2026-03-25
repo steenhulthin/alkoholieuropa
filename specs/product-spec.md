@@ -20,16 +20,21 @@ Provide an exploratory dashboard that lets users compare alcohol-consumption hab
 
 ### Sidebar Filters
 
-- `Sex`: multi-select checkbox group
-- `Age group`: multi-select checkbox group
-- `Frequency type`: multi-select checkbox group
+- `Sex`: multi-select checkbox group - represented with "Female" and "Male"
+- `Age group`: multi-select checkbox group - represented with "15-24", "25-34", "35-44", "45-64", "65-74" and "Over 74"
+- `Frequency type`: multi-select checkbox group - represented with "Daily", "Weekly", "Monthly", "Less than monthly" and "Never or less than yearly"
+
+Default selection: 
+`Sex` should be: all
+`Age group` shoudl be: all
+`frequency type` should be: "Daily" and "weekly"
 
 All available values are populated from the alcohol dataset after labels are attached.
 
 ### Country Map
 
-- displays average alcohol indicator values by country
-- clicking a country toggles it as the selected cross-chart filter
+- displays average alcohol indicator values by country - The share and colors should only be shown when one or more frequency type(s) is selected
+- clicking a country toggles it as the selected cross-chart filter - Clicking another country shoud select that. Clicking the map on no country should clear the selection. 
 - when a country is selected, it is outlined on the map
 
 ### Alcohol Habits Tab
