@@ -32,10 +32,9 @@
 - define filter choices and defaults
 - define Shiny UI
 - render a sidebar dashboard description and source references
-- handle selected-country reactivity
 - prepare filtered DataFrames
 - render Plotly figures
-- inject inline JavaScript for Plotly resizing and click events
+- inject inline JavaScript for Plotly resizing
 
 ### `alcoholandsex/shared.py`
 
@@ -61,7 +60,6 @@
 - startup data loading happens at module import time
 - app code mixes UI, data prep, and visualization logic
 - project-specific rules are duplicated across app/runtime and preprocessing
-- map and scatter click bindings still live in inline JavaScript
 - no tests or linting configuration are present
 - dependency versions are not pinned
 

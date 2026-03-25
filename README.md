@@ -48,7 +48,7 @@ The dashboard currently:
   - a sex-satisfaction bar chart
   - a country-level scatterplot comparing both indicators
 
-Country selection is interactive: clicking the map filters the other charts.
+Country-level cross-filtering is disabled. The dashboard always shows all countries that match the selected sidebar filters.
 
 Source references:
 

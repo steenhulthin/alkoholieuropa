@@ -1,9 +1,7 @@
-import json
-
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from shiny import App, reactive, ui
+from shiny import App, ui
 from shinywidgets import output_widget, render_widget
 
 from shared import (
@@ -275,10 +273,7 @@ app_ui = ui.page_sidebar(
             "country distribution in the bar charts, and view the relationship between "
             "alcohol consumption and sex satisfaction in the scatterplot."
         ),
-        ui.p(
-            "Click a country on the map to focus the charts on that country. Click the "
-            "map background to clear the country filter."
-        ),
+        ui.p("All charts always show all countries that match the selected filters."),
         ui.h6("Data Sources"),
         ui.tags.ul(
             _source_item(
@@ -293,7 +288,7 @@ app_ui = ui.page_sidebar(
         title="Filter controls",
     ),
     ui.card(
-        ui.card_header("Country map (click a country to filter all charts, click empty map to clear)"),
+        ui.card_header("Country map"),
         ui.card_body(
             output_widget("country_map", width="100%", height="100%"),
             class_="p-0",
@@ -336,7 +331,6 @@ app_ui = ui.page_sidebar(
     ui.tags.script(
         """
         (() => {
-          const iso3ToGeo = __ISO3_TO_GEO__;
           const observed = new WeakSet();
           const ro = new ResizeObserver((entries) => {
             for (const entry of entries) {
@@ -362,55 +356,12 @@ app_ui = ui.page_sidebar(
               });
           };
 
-          const extractCountry = (pt) => {
-            if (!pt) return null;
-            if (typeof pt.id === 'string' && pt.id) return pt.id;
-            const cd = pt.customdata;
-            if (Array.isArray(cd) && cd.length) return cd[0];
-            if (typeof cd === 'string') return cd;
-            if (typeof pt.location === 'string' && iso3ToGeo[pt.location]) return iso3ToGeo[pt.location];
-            if (pt.data && Array.isArray(pt.data.ids) && Number.isInteger(pt.pointNumber)) {
-              return pt.data.ids[pt.pointNumber] || null;
-            }
-            return null;
-          };
-
-          const bindClick = (containerId, inputId) => {
-            const root = document.getElementById(containerId);
-            const plot = root ? root.querySelector('.js-plotly-plot') : null;
-            if (!plot || typeof plot.on !== 'function') return;
-            const marker = `bound_${inputId}`;
-            if (plot.dataset[marker]) return;
-            plot.dataset[marker] = "1";
-
-            plot.on('plotly_click', (evt) => {
-              plot.dataset.lastPointClick = String(Date.now());
-              const country = extractCountry(evt?.points?.[0]);
-              if (!country) return;
-              Shiny.setInputValue(inputId, { country, nonce: Date.now() }, { priority: 'event' });
-            });
-
-            root.addEventListener('click', (evt) => {
-              const recentPointClick = Number(plot.dataset.lastPointClick || "0");
-              if (Date.now() - recentPointClick < 250) return;
-              if (evt.target.closest('.modebar')) return;
-              Shiny.setInputValue(`${inputId}_clear`, { nonce: Date.now() }, { priority: 'event' });
-            });
-          };
-
           watchPlots();
-          bindClick('country_map', 'map_country_click');
-          bindClick('scatter_chart', 'scatter_country_click');
           new MutationObserver(watchPlots).observe(document.body, { childList: true, subtree: true });
-          new MutationObserver(() => {
-            bindClick('country_map', 'map_country_click');
-            bindClick('scatter_chart', 'scatter_country_click');
-          }).observe(document.body, { childList: true, subtree: true });
           window.addEventListener('load', watchPlots, { once: true });
           window.addEventListener('resize', watchPlots);
         })();
         """
-        .replace("__ISO3_TO_GEO__", json.dumps({iso3: geo for geo, iso3 in _ISO3_BY_GEO.items()}))
     ),
     ui.include_css(app_dir / "styles.css"),
     title="Alcohol and Sex Dashboard",
@@ -419,40 +370,6 @@ app_ui = ui.page_sidebar(
 
 
 def server(input, output, session):
-    selected_country = reactive.value(None)
-
-    @reactive.effect
-    @reactive.event(input.map_country_click)
-    def _map_country_click():
-        payload = input.map_country_click()
-        if not payload:
-            return
-        country = payload.get("country") if isinstance(payload, dict) else None
-        if not country:
-            return
-        current = selected_country.get()
-        selected_country.set(None if current == country else country)
-
-    @reactive.effect
-    @reactive.event(input.map_country_click_clear)
-    def _map_country_click_clear():
-        payload = input.map_country_click_clear()
-        if not payload:
-            return
-        selected_country.set(None)
-
-    @reactive.effect
-    @reactive.event(input.scatter_country_click)
-    def _scatter_country_click():
-        payload = input.scatter_country_click()
-        if not payload:
-            return
-        country = payload.get("country") if isinstance(payload, dict) else None
-        if not country:
-            return
-        selected_country.set(country)
-
-    @reactive.calc
     def alcohol_base():
         if alcohol_df.empty:
             return alcohol_df
@@ -478,17 +395,6 @@ def server(input, output, session):
             group_cols.append("frequenc_label")
         return data.groupby(group_cols, as_index=False)["OBS_VALUE"].mean()
 
-    @reactive.calc
-    def alcohol_selected():
-        data = alcohol_base()
-        if data.empty:
-            return data
-        country = selected_country.get()
-        if country:
-            data = data.loc[data["geo"] == country]
-        return data
-
-    @reactive.calc
     def satisfaction_country():
         if satisfaction_df.empty:
             return satisfaction_df
@@ -496,9 +402,6 @@ def server(input, output, session):
         data = satisfaction_df.copy()
         if selected_sex:
             data = data.loc[data["sex"].isin(selected_sex)]
-        country = selected_country.get()
-        if country:
-            data = data.loc[data["geo"] == country]
         if data.empty:
             return data
         country_cols = ["geo"]
@@ -540,6 +443,11 @@ def server(input, output, session):
             color_continuous_scale="Blues",
             labels={"OBS_VALUE": "Alcohol habits share (%)"},
         )
+        fig.update_traces(
+            text=map_df["geo"],
+            selected={"marker": {"opacity": 1}},
+            unselected={"marker": {"opacity": 1}},
+        )
         fig.update_geos(
             scope="europe",
             showcountries=True,
@@ -553,24 +461,6 @@ def server(input, output, session):
             margin=dict(l=10, r=10, t=30, b=10),
             coloraxis_colorbar=dict(title="Share (%)"),
         )
-
-        current_country = selected_country.get()
-        if current_country:
-            selected_row = map_df.loc[map_df["geo"] == current_country]
-            if not selected_row.empty:
-                fig.add_trace(
-                    go.Choropleth(
-                        locations=selected_row["iso3"],
-                        z=[1] * len(selected_row),
-                        customdata=selected_row[["geo"]].to_numpy(),
-                        locationmode="ISO-3",
-                        showscale=False,
-                        colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0)"]],
-                        marker_line_color="#111111",
-                        marker_line_width=3,
-                        hoverinfo="skip",
-                    )
-                )
         return fig
 
     @render_widget
@@ -579,7 +469,7 @@ def server(input, output, session):
             return _empty_plot(load_errors["app"])
         if load_errors.get("alcohol"):
             return _empty_plot(load_errors["alcohol"])
-        data = alcohol_selected()
+        data = alcohol_base()
         if data.empty:
             return _empty_plot("Select one or more frequency types to show alcohol data.")
 
@@ -662,7 +552,7 @@ def server(input, output, session):
             return _empty_plot(combined)
         if not _normalize_selected_codes(input.frequency_types(), alcohol_df, "frequenc", "frequenc_label"):
             return _empty_plot("Select one or more frequency types to show the relationship chart.")
-        alcohol = alcohol_selected()
+        alcohol = alcohol_base()
         sat = satisfaction_country()
         if alcohol.empty or sat.empty:
             return _empty_plot("Not enough overlapping country data for this scatterplot.")

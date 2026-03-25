@@ -43,3 +43,7 @@
   max-width: none !important;
   display: block !important;
 }
+
+#country_map .hoverlayer {
+  pointer-events: none !important;
+}

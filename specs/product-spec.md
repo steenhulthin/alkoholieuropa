@@ -25,6 +25,7 @@ Provide an exploratory dashboard that lets users compare alcohol-consumption hab
 - `Frequency type`: multi-select checkbox group - represented with "Daily", "Weekly", "Monthly", "Less than monthly" and "Never or less than yearly"
 - Under the filters, show a short dashboard description explaining that the user can compare countries on the map, inspect the bar charts, and review the scatterplot relationship
 - Under that description, show source references linking to the Eurostat alcohol dataset and the Eurostat perceived-health dataset
+- The dashboard does not support country click interactions between the map and charts or between charts
 
 Default selection: 
 `Sex` should be: all
@@ -36,20 +37,19 @@ All available values are populated from the alcohol dataset after labels are att
 ### Country Map
 
 - displays average alcohol indicator values by country - The share and colors should only be shown when one or more frequency type(s) is selected
-- clicking a country toggles it as the selected cross-chart filter - Clicking another country should select that. Clicking the map on no country should clear the selection.
-- when a country is selected, it is outlined on the map
+- no country-click selection or cross-chart filtering is applied from the map
 
 ### Alcohol Habits Tab
 
 - stacked bar chart
 - grouped by country
 - stacked by alcohol frequency label
-- filtered by selected sex, age group, frequency values, and selected country
+- filtered by selected sex, age group, and frequency values
 
 ### Sex Satisfaction Tab
 
 - bar chart by country
-- filtered by selected sex and selected country
+- filtered by selected sex
 - not split by age group in the current dataset usage
 - Frequency type not used for this graph (make user aware)
 
@@ -57,7 +57,7 @@ All available values are populated from the alcohol dataset after labels are att
 
 - Only show numbers if one or more `Frequency type` is selected.
 - scatterplot comparing country-level alcohol and satisfaction aggregates
-- clicking a point sets the selected country
+- no click selection is applied from scatterplot points
 
 ## Current Functional Rules
 
