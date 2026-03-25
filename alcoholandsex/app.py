@@ -7,9 +7,11 @@ from shinywidgets import output_widget, render_widget
 from shared import (
     app_dir,
     attach_labels,
+    display_label,
     filter_reference_slice,
     latest_snapshot,
     load_eurostat,
+    normalize_display_labels,
 )
 
 
@@ -109,6 +111,14 @@ def _load_data():
         alcohol_filtered,
         group_cols=["frequenc", "sex", "age", "geo"],
     )
+    alcohol_latest = normalize_display_labels(
+        alcohol_latest,
+        [
+            ("frequenc", "frequenc_label", "frequency"),
+            ("sex", "sex_label", "sex"),
+            ("age", "age_label", "age"),
+        ],
+    )
 
     sat_raw = load_eurostat("sdg_03_20")
     sat_labeled = attach_labels(sat_raw, "sdg_03_20")
@@ -119,6 +129,10 @@ def _load_data():
     sat_latest = latest_snapshot(
         sat_filtered,
         group_cols=["sex", "geo", "levels"],
+    )
+    sat_latest = normalize_display_labels(
+        sat_latest,
+        [("sex", "sex_label", "sex")],
     )
 
     return alcohol_latest, sat_latest
@@ -139,6 +153,7 @@ def _choices(
     label_col: str,
     by_frequency: bool = False,
     by_age: bool = False,
+    kind: str | None = None,
 ):
     if df.empty or code_col not in df.columns:
         return {}
@@ -148,15 +163,19 @@ def _choices(
         .dropna(subset=["code"])
         .drop_duplicates()
     )
+    pairs["display_label"] = [
+        display_label(code, label, kind or "")
+        for code, label in zip(pairs["code"], pairs["label"])
+    ]
     if by_frequency:
-        pairs["rank"] = pairs["label"].map(_frequency_rank)
-        pairs = pairs.sort_values(["rank", "label"])
+        pairs["rank"] = pairs["display_label"].map(_frequency_rank)
+        pairs = pairs.sort_values(["rank", "display_label"])
     elif by_age:
         pairs["rank"] = pairs["code"].map(_age_code_rank)
-        pairs = pairs.sort_values(["rank", "label"])
+        pairs = pairs.sort_values(["rank", "display_label"])
     else:
-        pairs = pairs.sort_values("label")
-    return {f"{row.label} ({row.code})": row.code for row in pairs.itertuples(index=False)}
+        pairs = pairs.sort_values("display_label")
+    return {row.code: row.display_label for row in pairs.itertuples(index=False)}
 
 
 def _normalize_selected_codes(
@@ -196,12 +215,20 @@ def _normalize_selected_codes(
     return sorted(set(out))
 
 
-sex_choices = _choices(alcohol_df, "sex", "sex_label")
-age_choices = _choices(alcohol_df, "age", "age_label", by_age=True)
-frequency_choices = _choices(alcohol_df, "frequenc", "frequenc_label", by_frequency=True)
-sex_default = list(sex_choices.values())
-age_default = list(age_choices.values())
-frequency_default = list(frequency_choices.values())
+sex_choices = _choices(alcohol_df, "sex", "sex_label", kind="sex")
+age_choices = _choices(alcohol_df, "age", "age_label", by_age=True, kind="age")
+frequency_choices = _choices(
+    alcohol_df,
+    "frequenc",
+    "frequenc_label",
+    by_frequency=True,
+    kind="frequency",
+)
+sex_default = list(sex_choices.keys())
+age_default = list(age_choices.keys())
+frequency_default = [
+    code for code, label in frequency_choices.items() if label in {"Daily", "Weekly"}
+]
 
 app_ui = ui.page_sidebar(
     ui.sidebar(
@@ -238,6 +265,7 @@ app_ui = ui.page_sidebar(
             ui.card(
                 ui.card_header("Sex satisfaction level by country"),
                 ui.p("Not divided into age groups in this dataset (population aged 16+)."),
+                ui.p("Frequency type does not affect this chart."),
                 ui.card_body(
                     output_widget("satisfaction_chart", width="100%", height="100%"),
                     class_="p-0",
@@ -300,9 +328,17 @@ app_ui = ui.page_sidebar(
             plot.dataset[marker] = "1";
 
             plot.on('plotly_click', (evt) => {
+              plot.dataset.lastPointClick = String(Date.now());
               const country = extractCountry(evt?.points?.[0]);
               if (!country) return;
               Shiny.setInputValue(inputId, { country, nonce: Date.now() }, { priority: 'event' });
+            });
+
+            root.addEventListener('click', (evt) => {
+              const recentPointClick = Number(plot.dataset.lastPointClick || "0");
+              if (Date.now() - recentPointClick < 250) return;
+              if (evt.target.closest('.modebar')) return;
+              Shiny.setInputValue(`${inputId}_clear`, { nonce: Date.now() }, { priority: 'event' });
             });
           };
 
@@ -341,6 +377,14 @@ def server(input, output, session):
         selected_country.set(None if current == country else country)
 
     @reactive.effect
+    @reactive.event(input.map_country_click_clear)
+    def _map_country_click_clear():
+        payload = input.map_country_click_clear()
+        if not payload:
+            return
+        selected_country.set(None)
+
+    @reactive.effect
     @reactive.event(input.scatter_country_click)
     def _scatter_country_click():
         payload = input.scatter_country_click()
@@ -365,8 +409,9 @@ def server(input, output, session):
             data = data.loc[data["sex"].isin(selected_sex)]
         if selected_age:
             data = data.loc[data["age"].isin(selected_age)]
-        if selected_freq:
-            data = data.loc[data["frequenc"].isin(selected_freq)]
+        if not selected_freq:
+            return data.iloc[0:0].copy()
+        data = data.loc[data["frequenc"].isin(selected_freq)]
         if data.empty:
             return data
         group_cols = ["geo", "frequenc"]
@@ -409,6 +454,9 @@ def server(input, output, session):
     def country_map():
         if load_error:
             return _empty_plot(f"Data loading failed: {load_error}")
+
+        if not _normalize_selected_codes(input.frequency_types(), alcohol_df, "frequenc", "frequenc_label"):
+            return _empty_plot("Select one or more frequency types to show the country map.")
 
         data = alcohol_base()
         if data.empty:
@@ -472,7 +520,7 @@ def server(input, output, session):
             return _empty_plot(f"Data loading failed: {load_error}")
         data = alcohol_selected()
         if data.empty:
-            return _empty_plot("No alcohol data for the selected sex, age group, and frequency type.")
+            return _empty_plot("Select one or more frequency types to show alcohol data.")
 
         country_col = "geo_label" if "geo_label" in data.columns else "geo"
         freq_col = "frequenc_label" if "frequenc_label" in data.columns else "frequenc"
@@ -544,6 +592,8 @@ def server(input, output, session):
     def scatter_chart():
         if load_error:
             return _empty_plot(f"Data loading failed: {load_error}")
+        if not _normalize_selected_codes(input.frequency_types(), alcohol_df, "frequenc", "frequenc_label"):
+            return _empty_plot("Select one or more frequency types to show the relationship chart.")
         alcohol = alcohol_selected()
         sat = satisfaction_country()
         if alcohol.empty or sat.empty:

@@ -147,6 +147,64 @@ def attach_labels(df: pd.DataFrame, dataset_id: str) -> pd.DataFrame:
     return labeled
 
 
+def display_label(code: object, label: object, kind: str) -> str:
+    code_text = str(code).strip().upper()
+    label_text = str(label).strip()
+    normalized = label_text.lower()
+
+    if kind == "sex":
+        if code_text == "F" or "female" in normalized or "women" in normalized:
+            return "Female"
+        if code_text == "M" or "male" in normalized or "men" in normalized:
+            return "Male"
+
+    if kind == "age":
+        age_map = {
+            "Y15-24": "15-24",
+            "Y25-34": "25-34",
+            "Y35-44": "35-44",
+            "Y45-64": "45-64",
+            "Y65-74": "65-74",
+            "Y_GE75": "Over 74",
+            "T_GE75": "Over 74",
+        }
+        if code_text in age_map:
+            return age_map[code_text]
+
+    if kind == "frequency":
+        if "every day" in normalized or "daily" in normalized:
+            return "Daily"
+        if "every week" in normalized or "weekly" in normalized or normalized == "week":
+            return "Weekly"
+        if "every month" in normalized or "monthly" in normalized or normalized == "month":
+            return "Monthly"
+        if "less" in normalized and "month" in normalized:
+            return "Less than monthly"
+        if "never" in normalized or "last 12" in normalized:
+            return "Never or less than yearly"
+
+    return label_text
+
+
+def normalize_display_labels(
+    df: pd.DataFrame,
+    label_specs: list[tuple[str, str, str]],
+) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    normalized = df.copy()
+    for code_col, label_col, kind in label_specs:
+        if code_col not in normalized.columns:
+            continue
+        labels = normalized[label_col] if label_col in normalized.columns else normalized[code_col]
+        normalized[label_col] = [
+            display_label(code, label, kind)
+            for code, label in zip(normalized[code_col], labels)
+        ]
+    return normalized
+
+
 def filter_reference_slice(df: pd.DataFrame, keep_dims: list[str]) -> pd.DataFrame:
     constrained = df.copy()
     preferred_values = {
