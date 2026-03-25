@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import re
-import json
 from pathlib import Path
-from urllib.request import urlopen
 
 import pandas as pd
 
@@ -27,90 +25,22 @@ def _parse_obs_value(value: object) -> float | None:
         return None
 
 
-def load_eurostat_tsv(dataset_id: str) -> pd.DataFrame:
-    url = f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{dataset_id}?format=TSV"
-    raw = pd.read_csv(url, sep="\t")
-
-    first_col = raw.columns[0]
-    dim_part, _ = first_col.split("\\", 1)
-    dim_names = dim_part.split(",")
-
-    table = raw.rename(columns={first_col: "_dims"})
-    dim_values = table["_dims"].str.split(",", expand=True)
-    dim_values.columns = dim_names
-
-    table = pd.concat([dim_values, table.drop(columns="_dims")], axis=1)
-    year_cols = [col for col in table.columns if re.match(r"^\d{4}", str(col))]
-    long_df = table.melt(
-        id_vars=dim_names,
-        value_vars=year_cols,
-        var_name="TIME_PERIOD",
-        value_name="raw_value",
-    )
-    long_df["year"] = pd.to_numeric(
-        long_df["TIME_PERIOD"].astype(str).str.extract(r"(\d{4})")[0], errors="coerce"
-    ).astype("Int64")
-    long_df["OBS_VALUE"] = long_df["raw_value"].map(_parse_obs_value)
-    long_df = long_df.dropna(subset=["year", "OBS_VALUE"])
-    return long_df
-
-
-def load_eurostat_json(dataset_id: str) -> pd.DataFrame:
-    url = f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{dataset_id}"
-    with urlopen(url) as response:
-        data = json.loads(response.read().decode("utf-8"))
-
-    dim_ids = data.get("id", [])
-    dim_sizes = data.get("size", [])
-    dimensions = data.get("dimension", {})
-    values = data.get("value", {})
-
-    if not dim_ids or not dim_sizes or not isinstance(values, dict):
-        return pd.DataFrame()
-
-    dim_pos_to_code: dict[str, dict[int, str]] = {}
-    for dim in dim_ids:
-        cat = ((dimensions.get(dim) or {}).get("category") or {})
-        idx = cat.get("index", {}) or {}
-        dim_pos_to_code[dim] = {int(pos): code for code, pos in idx.items()}
-
-    rows: list[dict[str, object]] = []
-    for flat_index_str, obs_value in values.items():
-        flat_index = int(flat_index_str)
-        positions: list[int] = []
-        remainder = flat_index
-        for size in reversed(dim_sizes):
-            positions.append(remainder % size)
-            remainder //= size
-        positions.reverse()
-
-        row: dict[str, object] = {"OBS_VALUE": float(obs_value)}
-        for i, dim in enumerate(dim_ids):
-            pos = positions[i]
-            row[dim] = dim_pos_to_code.get(dim, {}).get(pos)
-        rows.append(row)
-
-    df = pd.DataFrame(rows)
-    if "time" in df.columns:
-        df = df.rename(columns={"time": "TIME_PERIOD"})
-    if "TIME_PERIOD" in df.columns:
-        df["year"] = pd.to_numeric(
-            df["TIME_PERIOD"].astype(str).str.extract(r"(\d{4})")[0], errors="coerce"
-        ).astype("Int64")
-        df = df.dropna(subset=["year"])
-    return df
+def _dataset_basename(dataset_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]+", "_", dataset_id).strip("_").lower()
 
 
 def load_eurostat(dataset_id: str) -> pd.DataFrame:
-    try:
-        return load_eurostat_json(dataset_id)
-    except Exception as json_exc:
-        try:
-            return load_eurostat_tsv(dataset_id)
-        except Exception as tsv_exc:
-            raise RuntimeError(
-                f"Eurostat load failed for '{dataset_id}'. JSON error: {json_exc}. TSV error: {tsv_exc}."
-            ) from tsv_exc
+    observations_path = processed_dir / f"{_dataset_basename(dataset_id)}__observations.parquet"
+    if not observations_path.exists():
+        raise RuntimeError(
+            f"Local dataset file is missing: {observations_path}. "
+            "Run .\\run_data.ps1 to generate local observation Parquet files before starting the app."
+        )
+
+    df = pd.read_parquet(observations_path)
+    if df.empty:
+        raise RuntimeError(f"Local dataset file is empty: {observations_path}")
+    return df
 
 
 def attach_labels(df: pd.DataFrame, dataset_id: str) -> pd.DataFrame:

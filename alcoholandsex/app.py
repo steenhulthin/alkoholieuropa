@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -100,7 +102,13 @@ def _geo_to_iso3(code: str) -> str | None:
     return _ISO3_BY_GEO.get(str(code).strip().upper())
 
 
-def _load_data():
+def _source_item(label: str, href: str):
+    return ui.tags.li(
+        ui.tags.a(label, href=href, target="_blank", rel="noopener noreferrer")
+    )
+
+
+def _load_alcohol_data() -> pd.DataFrame:
     alcohol_raw = load_eurostat("hlth_ehis_al1c")
     alcohol_labeled = attach_labels(alcohol_raw, "hlth_ehis_al1c")
     alcohol_filtered = filter_reference_slice(
@@ -119,7 +127,10 @@ def _load_data():
             ("age", "age_label", "age"),
         ],
     )
+    return alcohol_latest
 
+
+def _load_satisfaction_data() -> pd.DataFrame:
     sat_raw = load_eurostat("sdg_03_20")
     sat_labeled = attach_labels(sat_raw, "sdg_03_20")
     sat_filtered = filter_reference_slice(
@@ -135,16 +146,33 @@ def _load_data():
         [("sex", "sex_label", "sex")],
     )
 
-    return alcohol_latest, sat_latest
+    return sat_latest
+
+
+def _load_data():
+    errors: dict[str, str] = {}
+
+    try:
+        alcohol_df = _load_alcohol_data()
+    except Exception as exc:
+        alcohol_df = pd.DataFrame()
+        errors["alcohol"] = f"Alcohol dataset loading failed: {exc}"
+
+    try:
+        satisfaction_df = _load_satisfaction_data()
+    except Exception as exc:
+        satisfaction_df = pd.DataFrame()
+        errors["satisfaction"] = f"Sex satisfaction dataset loading failed: {exc}"
+
+    return alcohol_df, satisfaction_df, errors
 
 
 try:
-    alcohol_df, satisfaction_df = _load_data()
-    load_error = ""
+    alcohol_df, satisfaction_df, load_errors = _load_data()
 except Exception as exc:
     alcohol_df = pd.DataFrame()
     satisfaction_df = pd.DataFrame()
-    load_error = str(exc)
+    load_errors = {"app": f"Dashboard data loading failed: {exc}"}
 
 
 def _choices(
@@ -240,10 +268,32 @@ app_ui = ui.page_sidebar(
             choices=frequency_choices,
             selected=frequency_default,
         ),
+        ui.hr(),
+        ui.h6("What You Can See"),
+        ui.p(
+            "Compare alcohol habits across European countries on the map, inspect the "
+            "country distribution in the bar charts, and view the relationship between "
+            "alcohol consumption and sex satisfaction in the scatterplot."
+        ),
+        ui.p(
+            "Click a country on the map to focus the charts on that country. Click the "
+            "map background to clear the country filter."
+        ),
+        ui.h6("Data Sources"),
+        ui.tags.ul(
+            _source_item(
+                "Eurostat alcohol habits dataset: hlth_ehis_al1c",
+                "https://ec.europa.eu/eurostat/databrowser/view/hlth_ehis_al1c__custom_20378082/default/table",
+            ),
+            _source_item(
+                "Eurostat perceived health dataset: sdg_03_20",
+                "https://ec.europa.eu/eurostat/databrowser/view/sdg_03_20/default/table?lang=en",
+            ),
+        ),
         title="Filter controls",
     ),
     ui.card(
-        ui.card_header("Country map (click a country to filter all charts)"),
+        ui.card_header("Country map (click a country to filter all charts, click empty map to clear)"),
         ui.card_body(
             output_widget("country_map", width="100%", height="100%"),
             class_="p-0",
@@ -286,6 +336,7 @@ app_ui = ui.page_sidebar(
     ui.tags.script(
         """
         (() => {
+          const iso3ToGeo = __ISO3_TO_GEO__;
           const observed = new WeakSet();
           const ro = new ResizeObserver((entries) => {
             for (const entry of entries) {
@@ -313,16 +364,21 @@ app_ui = ui.page_sidebar(
 
           const extractCountry = (pt) => {
             if (!pt) return null;
+            if (typeof pt.id === 'string' && pt.id) return pt.id;
             const cd = pt.customdata;
             if (Array.isArray(cd) && cd.length) return cd[0];
             if (typeof cd === 'string') return cd;
+            if (typeof pt.location === 'string' && iso3ToGeo[pt.location]) return iso3ToGeo[pt.location];
+            if (pt.data && Array.isArray(pt.data.ids) && Number.isInteger(pt.pointNumber)) {
+              return pt.data.ids[pt.pointNumber] || null;
+            }
             return null;
           };
 
           const bindClick = (containerId, inputId) => {
             const root = document.getElementById(containerId);
             const plot = root ? root.querySelector('.js-plotly-plot') : null;
-            if (!plot) return;
+            if (!plot || typeof plot.on !== 'function') return;
             const marker = `bound_${inputId}`;
             if (plot.dataset[marker]) return;
             plot.dataset[marker] = "1";
@@ -354,6 +410,7 @@ app_ui = ui.page_sidebar(
           window.addEventListener('resize', watchPlots);
         })();
         """
+        .replace("__ISO3_TO_GEO__", json.dumps({iso3: geo for geo, iso3 in _ISO3_BY_GEO.items()}))
     ),
     ui.include_css(app_dir / "styles.css"),
     title="Alcohol and Sex Dashboard",
@@ -452,8 +509,10 @@ def server(input, output, session):
 
     @render_widget
     def country_map():
-        if load_error:
-            return _empty_plot(f"Data loading failed: {load_error}")
+        if load_errors.get("app"):
+            return _empty_plot(load_errors["app"])
+        if load_errors.get("alcohol"):
+            return _empty_plot(load_errors["alcohol"])
 
         if not _normalize_selected_codes(input.frequency_types(), alcohol_df, "frequenc", "frequenc_label"):
             return _empty_plot("Select one or more frequency types to show the country map.")
@@ -516,8 +575,10 @@ def server(input, output, session):
 
     @render_widget
     def alcohol_chart():
-        if load_error:
-            return _empty_plot(f"Data loading failed: {load_error}")
+        if load_errors.get("app"):
+            return _empty_plot(load_errors["app"])
+        if load_errors.get("alcohol"):
+            return _empty_plot(load_errors["alcohol"])
         data = alcohol_selected()
         if data.empty:
             return _empty_plot("Select one or more frequency types to show alcohol data.")
@@ -563,8 +624,10 @@ def server(input, output, session):
 
     @render_widget
     def satisfaction_chart():
-        if load_error:
-            return _empty_plot(f"Data loading failed: {load_error}")
+        if load_errors.get("app"):
+            return _empty_plot(load_errors["app"])
+        if load_errors.get("satisfaction"):
+            return _empty_plot(load_errors["satisfaction"])
         data = satisfaction_country()
         if data.empty:
             return _empty_plot("No sex satisfaction data for the selected sex.")
@@ -590,8 +653,13 @@ def server(input, output, session):
 
     @render_widget
     def scatter_chart():
-        if load_error:
-            return _empty_plot(f"Data loading failed: {load_error}")
+        if load_errors.get("app"):
+            return _empty_plot(load_errors["app"])
+        if load_errors.get("alcohol") or load_errors.get("satisfaction"):
+            combined = " ".join(
+                err for err in [load_errors.get("alcohol"), load_errors.get("satisfaction")] if err
+            )
+            return _empty_plot(combined)
         if not _normalize_selected_codes(input.frequency_types(), alcohol_df, "frequenc", "frequenc_label"):
             return _empty_plot("Select one or more frequency types to show the relationship chart.")
         alcohol = alcohol_selected()

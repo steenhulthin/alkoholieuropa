@@ -12,6 +12,15 @@ Shiny app (uses `alcoholandsex/.venv`):
 .\run_app.ps1
 ```
 
+Recommended order after this change:
+
+```powershell
+.\run_data.ps1
+.\run_app.ps1
+```
+
+The dashboard now expects local observation Parquet files in `data/processed/` and does not call the Eurostat API at runtime.
+
 Install packages in the correct venv:
 
 ```powershell

@@ -1,22 +1,40 @@
 """Transform Eurostat SDMX XML files into Parquet tables for Shiny dashboards.
 
-This script is designed for XML payloads from the Eurostat SDMX API.
-It always exports dimensions and codelists, and exports observations when
-the XML includes data (e.g., GenericData/CompactData payloads).
+This script reads local XML structure files from `data/`, writes local Parquet
+lookup tables, and ensures observation Parquet files are available for offline
+dashboard runtime. If an XML file does not include observations, the script
+fetches the dataset values from Eurostat during preprocessing and writes them to
+`data/processed/` so the dashboard itself does not need network access.
 """
 
 #from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
+from urllib.request import urlopen
 import xml.etree.ElementTree as ET
 
 import pandas as pd
 
+_OBS_RE = re.compile(r"^\s*([-+]?\d*\.?\d+)")
+
 
 def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
+
+
+def _parse_obs_value(value: object) -> float | None:
+    if pd.isna(value):
+        return None
+    match = _OBS_RE.search(str(value))
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
 
 
 def _name_by_lang(node: ET.Element, lang: str = "en") -> str | None:
@@ -46,6 +64,92 @@ def _dataset_id(root: ET.Element, fallback: str) -> str:
         return structure.attrib["id"]
 
     return fallback
+
+
+def _load_eurostat_tsv(dataset_id: str) -> pd.DataFrame:
+    url = f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{dataset_id}?format=TSV"
+    raw = pd.read_csv(url, sep="\t")
+
+    first_col = raw.columns[0]
+    dim_part, _ = first_col.split("\\", 1)
+    dim_names = dim_part.split(",")
+
+    table = raw.rename(columns={first_col: "_dims"})
+    dim_values = table["_dims"].str.split(",", expand=True)
+    dim_values.columns = dim_names
+
+    table = pd.concat([dim_values, table.drop(columns="_dims")], axis=1)
+    year_cols = [col for col in table.columns if re.match(r"^\d{4}", str(col))]
+    long_df = table.melt(
+        id_vars=dim_names,
+        value_vars=year_cols,
+        var_name="TIME_PERIOD",
+        value_name="raw_value",
+    )
+    long_df["year"] = pd.to_numeric(
+        long_df["TIME_PERIOD"].astype(str).str.extract(r"(\d{4})")[0], errors="coerce"
+    ).astype("Int64")
+    long_df["OBS_VALUE"] = long_df["raw_value"].map(_parse_obs_value)
+    long_df = long_df.dropna(subset=["year", "OBS_VALUE"])
+    long_df.insert(0, "dataset_id", dataset_id)
+    return long_df
+
+
+def _load_eurostat_json(dataset_id: str) -> pd.DataFrame:
+    url = f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{dataset_id}"
+    with urlopen(url) as response:
+        data = json.loads(response.read().decode("utf-8"))
+
+    dim_ids = data.get("id", [])
+    dim_sizes = data.get("size", [])
+    dimensions = data.get("dimension", {})
+    values = data.get("value", {})
+
+    if not dim_ids or not dim_sizes or not isinstance(values, dict):
+        return pd.DataFrame()
+
+    dim_pos_to_code: dict[str, dict[int, str]] = {}
+    for dim in dim_ids:
+        cat = ((dimensions.get(dim) or {}).get("category") or {})
+        idx = cat.get("index", {}) or {}
+        dim_pos_to_code[dim] = {int(pos): code for code, pos in idx.items()}
+
+    rows: list[dict[str, object]] = []
+    for flat_index_str, obs_value in values.items():
+        flat_index = int(flat_index_str)
+        positions: list[int] = []
+        remainder = flat_index
+        for size in reversed(dim_sizes):
+            positions.append(remainder % size)
+            remainder //= size
+        positions.reverse()
+
+        row: dict[str, object] = {"dataset_id": dataset_id, "OBS_VALUE": float(obs_value)}
+        for i, dim in enumerate(dim_ids):
+            row[dim] = dim_pos_to_code.get(dim, {}).get(positions[i])
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    if "time" in df.columns:
+        df = df.rename(columns={"time": "TIME_PERIOD"})
+    if "TIME_PERIOD" in df.columns:
+        df["year"] = pd.to_numeric(
+            df["TIME_PERIOD"].astype(str).str.extract(r"(\d{4})")[0], errors="coerce"
+        ).astype("Int64")
+        df = df.dropna(subset=["year"])
+    return df
+
+
+def _load_eurostat_api(dataset_id: str) -> pd.DataFrame:
+    try:
+        return _load_eurostat_json(dataset_id)
+    except Exception as json_exc:
+        try:
+            return _load_eurostat_tsv(dataset_id)
+        except Exception as tsv_exc:
+            raise RuntimeError(
+                f"Eurostat load failed for '{dataset_id}'. JSON error: {json_exc}. TSV error: {tsv_exc}."
+            ) from tsv_exc
 
 
 def _extract_codelists(root: ET.Element, dataset_id: str) -> tuple[pd.DataFrame, dict[str, dict[str, str]]]:
@@ -260,7 +364,7 @@ def _apply_project_filters(
     eu_geo_codes = {"EU27_2020", "EU28", "EU27_2007"}
     unwanted_freq_codes = {"NEVER", "N12M"}
     unwanted_freq_labels = {"never", "not in the last 12 months"}
-    allowed_age_codes = {"Y15-24", "Y25-34", "Y35-44", "Y45-64", "Y65-74", "Y_GE75"}
+    allowed_alcohol_age_codes = {"Y15-24", "Y25-34", "Y35-44", "Y45-64", "Y65-74", "Y_GE75"}
     removed_sex_codes = {"T"}
     removed_satisfaction_level_codes = {"EURO"}
 
@@ -278,12 +382,12 @@ def _apply_project_filters(
                     | geo_text.str.contains("euro area", na=False)
                 )
             ]
-        if "age" in filtered_obs.columns:
-            filtered_obs = filtered_obs.loc[filtered_obs["age"].isin(allowed_age_codes)]
         if "sex" in filtered_obs.columns:
             filtered_obs = filtered_obs.loc[~filtered_obs["sex"].isin(removed_sex_codes)]
 
         if dataset_id.upper() == "HLTH_EHIS_AL1C":
+            if "age" in filtered_obs.columns:
+                filtered_obs = filtered_obs.loc[filtered_obs["age"].isin(allowed_alcohol_age_codes)]
             if "frequenc" in filtered_obs.columns:
                 freq_codes = filtered_obs["frequenc"].astype(str).str.strip().str.upper()
                 filtered_obs = filtered_obs.loc[~freq_codes.isin(unwanted_freq_codes)]
@@ -311,8 +415,8 @@ def _apply_project_filters(
             )
             filtered_codelists = filtered_codelists.loc[~remove_geo]
         is_age = filtered_codelists["codelist_id"].eq("AGE")
-        if is_age.any():
-            remove_age = is_age & (~filtered_codelists["code"].isin(allowed_age_codes))
+        if dataset_id.upper() == "HLTH_EHIS_AL1C" and is_age.any():
+            remove_age = is_age & (~filtered_codelists["code"].isin(allowed_alcohol_age_codes))
             filtered_codelists = filtered_codelists.loc[~remove_age]
         is_sex = filtered_codelists["codelist_id"].eq("SEX")
         if is_sex.any():
@@ -352,10 +456,17 @@ def transform_file(xml_path: Path, output_dir: Path) -> dict[str, Path]:
     codelists_df, codelist_labels = _extract_codelists(root, dataset)
     dimensions_df = _extract_dimensions(root, dataset)
     observations_df = _extract_observations(root, dataset)
+    if observations_df.empty:
+        observations_df = _load_eurostat_api(dataset)
     observations_labeled_df = _attach_labels(observations_df, dimensions_df, codelist_labels)
     observations_labeled_df, codelists_df = _apply_project_filters(
         dataset, observations_labeled_df, codelists_df
     )
+    if observations_labeled_df.empty:
+        raise RuntimeError(
+            f"No observation rows were produced for dataset '{dataset}'. "
+            "The dashboard needs local __observations.parquet files for every runtime dataset."
+        )
 
     output_paths: dict[str, Path] = {}
 

@@ -2,8 +2,8 @@
 
 This repository contains a small two-part data app:
 
-- a preprocessing script that extracts Eurostat SDMX XML structure data into Parquet lookup tables
-- a Python Shiny dashboard that combines those local lookup tables with live Eurostat API data
+- a preprocessing script that extracts Eurostat SDMX XML structure data and observation data into local Parquet files
+- a Python Shiny dashboard that reads those local files from `data/` at runtime
 
 The current dashboard explores alcohol consumption habits and sex satisfaction across European countries.
 
@@ -38,9 +38,9 @@ The current dashboard explores alcohol consumption habits and sex satisfaction a
 
 The dashboard currently:
 
-- loads alcohol-consumption survey data from Eurostat dataset `hlth_ehis_al1c`
-- loads sex-satisfaction data from Eurostat dataset `sdg_03_20`
-- enriches both datasets with local labels from Parquet codelist exports
+- reads alcohol-consumption survey data from local Parquet exported for Eurostat dataset `hlth_ehis_al1c`
+- reads sex-satisfaction data from local Parquet exported for Eurostat dataset `sdg_03_20`
+- enriches both datasets with local labels from Parquet codelist exports when needed
 - filters to a project-specific comparison slice
 - shows:
   - a Europe choropleth map
@@ -49,6 +49,11 @@ The dashboard currently:
   - a country-level scatterplot comparing both indicators
 
 Country selection is interactive: clicking the map filters the other charts.
+
+Source references:
+
+- Alcohol habits: <https://ec.europa.eu/eurostat/databrowser/view/hlth_ehis_al1c__custom_20378082/default/table>
+- Perceived health by sex: <https://ec.europa.eu/eurostat/databrowser/view/sdg_03_20/default/table?lang=en>
 
 ## Setup
 
@@ -71,6 +76,7 @@ See [VENV_USAGE.md](/mnt/e/prj/dagens_dashboard/alkohol-i-europa/VENV_USAGE.md) 
 ## Run The Data Pipeline
 
 The preprocessing script reads Eurostat XML files from `data/` and writes Parquet tables to `data/processed/`.
+When the XML files only contain structure metadata, it also fetches observation rows during preprocessing so the app can stay offline at runtime.
 
 ```powershell
 .\run_data.ps1
@@ -80,7 +86,7 @@ This script currently produces:
 
 - `__codelists.parquet`
 - `__dimensions.parquet`
-- optionally `__observations.parquet` when the XML contains observation rows
+- `__observations.parquet`
 
 ## Run The App
 
@@ -92,16 +98,16 @@ By default the app runs on port `8000`.
 
 ## Data Flow
 
-1. XML metadata is transformed into local Parquet lookup tables by [transform_eurostat_xml_to_parquet.py](/mnt/e/prj/dagens_dashboard/alkohol-i-europa/data/transform_eurostat_xml_to_parquet.py).
-2. The app fetches live Eurostat data in JSON format and falls back to TSV when needed in [shared.py](/mnt/e/prj/dagens_dashboard/alkohol-i-europa/alcoholandsex/shared.py).
-3. Local codelists and dimensions are used to attach human-readable labels.
+1. XML metadata is transformed into local Parquet tables by [transform_eurostat_xml_to_parquet.py](/mnt/e/prj/dagens_dashboard/alkohol-i-europa/data/transform_eurostat_xml_to_parquet.py).
+2. The data pipeline also creates local `__observations.parquet` files for the dashboard runtime.
+3. The app reads only local files from `data/processed/` in [shared.py](/mnt/e/prj/dagens_dashboard/alkohol-i-europa/alcoholandsex/shared.py).
 4. The app applies a project-specific filtered comparison slice and takes the latest yearly snapshot per grouping.
 5. Plotly charts render the filtered result inside a Shiny app in [app.py](/mnt/e/prj/dagens_dashboard/alkohol-i-europa/alcoholandsex/app.py).
 
 ## Current Limitations
 
-- The dashboard depends on live Eurostat API availability at runtime.
 - The app and data pipeline are coupled through dataset-specific assumptions and file naming.
+- The data pipeline still depends on Eurostat availability when the local XML files do not contain observations.
 - Project-specific filtering rules are embedded directly in code rather than described as configuration.
 - There are no automated tests yet.
 

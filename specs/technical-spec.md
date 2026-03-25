@@ -16,7 +16,7 @@
 - entry point: [run_data.ps1](/mnt/e/prj/dagens_dashboard/alkohol-i-europa/run_data.ps1)
 - script: [transform_eurostat_xml_to_parquet.py](/mnt/e/prj/dagens_dashboard/alkohol-i-europa/data/transform_eurostat_xml_to_parquet.py)
 - input: XML files in `data/`
-- output: Parquet files in `data/processed/`
+- output: Parquet files in `data/processed/`, including local observation extracts used by the app
 
 ### Application Runtime
 
@@ -31,6 +31,7 @@
 - load both datasets at import time
 - define filter choices and defaults
 - define Shiny UI
+- render a sidebar dashboard description and source references
 - handle selected-country reactivity
 - prepare filtered DataFrames
 - render Plotly figures
@@ -38,7 +39,7 @@
 
 ### `alcoholandsex/shared.py`
 
-- fetch Eurostat data in JSON or TSV format
+- load local observation Parquet files from `data/processed/`
 - parse observation values
 - attach labels from processed Parquet tables
 - reduce datasets to a preferred reference slice
@@ -49,7 +50,8 @@
 - parse SDMX XML
 - extract codelists
 - extract dimensions
-- extract observations when present
+- extract observations when present in XML
+- fetch observations during preprocessing when XML is structure-only
 - attach labels to observations
 - apply project-specific filters
 - write Parquet outputs
@@ -59,6 +61,7 @@
 - startup data loading happens at module import time
 - app code mixes UI, data prep, and visualization logic
 - project-specific rules are duplicated across app/runtime and preprocessing
+- map and scatter click bindings still live in inline JavaScript
 - no tests or linting configuration are present
 - dependency versions are not pinned
 

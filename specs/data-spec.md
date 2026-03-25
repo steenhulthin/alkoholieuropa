@@ -33,17 +33,23 @@ The project stores extracted SDMX metadata in `data/processed/`:
 
 - `*__dimensions.parquet`
 - `*__codelists.parquet`
-- optionally `*__observations.parquet`
+- `*__observations.parquet`
 
 These files are generated from XML inputs in `data/` by [transform_eurostat_xml_to_parquet.py](/mnt/e/prj/dagens_dashboard/alkohol-i-europa/data/transform_eurostat_xml_to_parquet.py).
 
 ## Runtime Loading Rules
 
-- the app prefers Eurostat JSON loading
-- the app falls back to TSV loading if JSON fails
+- the app reads local `*__observations.parquet` files from `data/processed/`
+- the dashboard does not call the Eurostat API at runtime
 - labels are attached from local Parquet lookup files
 - rows are filtered to a project-specific comparison slice
 - latest yearly rows are selected per grouping
+
+## Preprocessing Rules
+
+- the data pipeline reads XML metadata from `data/`
+- if the XML files do not contain observation rows, the data pipeline fetches the dataset values during preprocessing
+- the data pipeline writes local `*__observations.parquet` files used by the dashboard runtime
 
 ## Current Project-Specific Filtering Rules
 
@@ -52,6 +58,9 @@ These files are generated from XML inputs in `data/` by [transform_eurostat_xml_
 - remove EU aggregate geographies such as `EU27_2020`, `EU28`, `EU27_2007`
 - remove euro area aggregate codes matching `EA*`
 - remove sex total code `T`
+
+### Alcohol Dataset Rules
+
 - allow only age codes:
   - `Y15-24`
   - `Y25-34`
@@ -59,14 +68,12 @@ These files are generated from XML inputs in `data/` by [transform_eurostat_xml_
   - `Y45-64`
   - `Y65-74`
   - `Y_GE75`
-
-### Alcohol Dataset Rules
-
 - remove frequency codes `NEVER` and `N12M`
 - remove matching labels for "never" and "not in the last 12 months"
 
 ### Satisfaction Dataset Rules
 
+- keep the dataset's fixed 16+ age slice and do not expose age as a dashboard filter
 - remove level code `EURO`
 
 ## Aggregation Rules In The App
@@ -80,6 +87,6 @@ These files are generated from XML inputs in `data/` by [transform_eurostat_xml_
 
 ## Known Data Coupling
 
-- the app assumes processed lookup files exist for the dataset IDs it loads
+- the app assumes processed observation and lookup files exist for the dataset IDs it loads
 - source dimension names are preserved from Eurostat, including names like `frequenc`
 - country mapping to ISO-3 is maintained manually in the app
